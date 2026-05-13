@@ -14,12 +14,14 @@ my $cgi = CGI->new;
 # Inicializar sesión
 my $session = CGI::Session->new(undef, $cgi, {Directory=>"$FindBin::Bin/.sesiones"});
 
+# Configuración para la cookie de sesión usando el ID generado
 my $cookie = $cgi->cookie(
     -name  => $session->name(),
     -value => $session->id()
 );
 
 # Manejo de cierre de sesión manual
+# Si recibe el parámetro 'logout', elimina la sesión actual y redirige al login
 if ($cgi->param('logout')) {
     $session->delete();
     $session->flush();
@@ -27,39 +29,50 @@ if ($cgi->param('logout')) {
     exit;
 }
 
-# Recuperar errores de la sesión (Patrón PRG)
+# Recuperar errores de la sesión (Patrón PRG - Post/Redirect/Get) para mostrar alertas
 my $error_msg = $session->param('flash_error') || '';
 $session->clear('flash_error') if $error_msg;
 
+# Si el usuario ya está autenticado, redirigir directamente al dashboard
 if ($session->param('id_usuario')) {
     print $cgi->redirect(-uri => 'dashboard.pl', -cookie => $cookie);
     exit;
 }
 
+# Procesamiento del formulario de login (método POST)
 if ($cgi->request_method() eq 'POST') {
-    my $usuario = $cgi->param('usuario');
+    # Capturar datos del formulario
+    my $usuario = $cgi->param('correo_electronico');
     my $password = $cgi->param('password');
     
+    # Eliminar espacios en blanco al inicio y al final del correo
     $usuario =~ s/^\s+|\s+$//g if defined $usuario;
     
+    # Validar que ambos campos contengan información
     if (!$usuario || !$password) {
-        $session->param('flash_error', 'Por favor, ingrese usuario y contraseña.');
+        $session->param('flash_error', 'Por favor, ingrese su correo electrónico y contraseña.');
         print $cgi->redirect(-uri => 'login.pl', -cookie => $cookie);
         exit;
     } else {
-        # Usar la nueva función nativa que evita el error de DLLs
-        my $user_data = get_user_by_username($usuario);
+        # Consultar la base de datos usando el correo proporcionado
+        my $user_data = get_user_by_email($usuario);
         
+        # Verificar si el usuario existe en la base de datos
         if ($user_data) {
+            # Comprobar que la cuenta del usuario se encuentre activa
             if ($user_data->{activo} == 1) {
+                # Hashear la contraseña ingresada para compararla con la base de datos
                 my $hashed_password = sha256_hex($password);
                 
+                # Validar la contraseña
                 if ($hashed_password eq $user_data->{contrasena}) {
+                    # Si las credenciales son correctas, registrar los datos en la sesión
                     $session->param('id_usuario', $user_data->{id_usuario});
                     $session->param('username', $user_data->{username});
                     $session->param('nombre_completo', $user_data->{nombre_completo});
                     $session->param('rol', $user_data->{rol});
                     
+                    # Redirigir al dashboard
                     print $cgi->redirect(-uri => 'dashboard.pl', -cookie => $cookie);
                     exit;
                 } else {
@@ -97,6 +110,7 @@ print <<'HTML';
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - IEEQ Registro</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
     <style>
         body {
@@ -246,16 +260,15 @@ print <<'HTML';
                 <h3 class="form-title">Iniciar Sesión</h3>
 HTML
 
-if ($error_msg) {
-    print qq|                <div class="alert alert-danger" role="alert">$error_msg</div>\n|;
-}
-
+# Formulario HTML principal para inicio de sesión
 print <<'HTML';
                 <form method="POST" action="login.pl">
+                    <!-- Campo para el correo electrónico -->
                     <div class="mb-3">
-                        <label for="usuario" class="form-label">Usuario</label>
-                        <input type="text" class="form-control" id="usuario" name="usuario" placeholder="Ingresa tu usuario" required autofocus>
+                        <label for="correo_electronico" class="form-label">Correo electrónico</label>
+                        <input type="email" class="form-control" id="correo_electronico" name="correo_electronico" placeholder="Ingresa tu correo electrónico" required autofocus>
                     </div>
+                    <!-- Campo para la contraseña con botón para revelar/ocultar -->
                     <div class="mb-4">
                         <label for="password" class="form-label">Contraseña</label>
                         <div class="input-group">
@@ -277,6 +290,33 @@ print <<'HTML';
     </div>
     
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.all.min.js"></script>
+HTML
+
+# Renderizar alerta de error mediante SweetAlert2 si existe un mensaje de error
+if ($error_msg) {
+    # Escapar comillas para evitar que el script JS se rompa
+    $error_msg =~ s/'/\\'/g;
+    print qq|
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Configuracion del contenedor flotante (Toast)
+            const Toast = Swal.mixin({
+              toast: true,
+              position: 'bottom-end',
+              showConfirmButton: false,
+              timer: 3000,
+              timerProgressBar: true
+            });
+            // Mostrar la alerta con el mensaje de error
+            Toast.fire({icon: 'error', title: '$error_msg'});
+        });
+    </script>
+    |;
+}
+
+print <<'HTML';
+    <!-- Funcionalidad para revelar u ocultar la contrasena en el formulario -->
     <script>
         document.getElementById('togglePassword').addEventListener('click', function() {
             const passwordInput = document.getElementById('password');

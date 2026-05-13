@@ -10,13 +10,14 @@ my $cgi = CGI->new;
 # Leer sesión desde el directorio local .sesiones
 my $session = CGI::Session->new(undef, $cgi, {Directory=>"$FindBin::Bin/.sesiones"});
 
-# Si no hay un id_usuario válido en la sesión, expulsar al login
+# Si no hay un id_usuario válido en la sesión, expulsar al login por seguridad
 if (!$session->param('id_usuario')) {
     print $cgi->redirect(-uri => 'login.pl');
     exit;
 }
 
-# Manejo del logout
+# Manejo del logout manual desde el panel
+# Elimina la sesión actual y redirige a la pantalla de autenticación
 if ($cgi->param('logout')) {
     $session->delete();
     $session->flush();
@@ -28,10 +29,11 @@ if ($cgi->param('logout')) {
 my $nombre_completo = $session->param('nombre_completo');
 my $rol = $session->param('rol');
 
-# Generar elementos dinámicos del menú según el rol
+# Generar elementos dinámicos del menú lateral basándose en los permisos del rol
 my $menu_html = '';
 
 if ($rol eq 'administrador') {
+    # El administrador tiene acceso total al sistema
     $menu_html .= <<'MENU';
         <li class="nav-item">
             <a class="nav-link text-white" href="gestion_usuarios.pl"><i class="bi bi-people me-2"></i>Gestión de Usuarios</a>
@@ -47,12 +49,14 @@ if ($rol eq 'administrador') {
         </li>
 MENU
 } elsif ($rol eq 'operador') {
+    # El operador solo puede registrar personas
     $menu_html .= <<'MENU';
         <li class="nav-item">
             <a class="nav-link text-white" href="#"><i class="bi bi-person-plus me-2"></i>Registrar Persona</a>
         </li>
 MENU
 } elsif ($rol eq 'validador') {
+    # El validador aprueba registros y ve reportes
     $menu_html .= <<'MENU';
         <li class="nav-item">
             <a class="nav-link text-white" href="#"><i class="bi bi-check2-square me-2"></i>Validación</a>
@@ -62,6 +66,7 @@ MENU
         </li>
 MENU
 } elsif ($rol eq 'lectura') {
+    # Rol de solo lectura para reportes
     $menu_html .= <<'MENU';
         <li class="nav-item">
             <a class="nav-link text-white" href="#"><i class="bi bi-file-earmark-bar-graph me-2"></i>Reportes</a>
@@ -231,9 +236,9 @@ print <<"HTML";
                     <div class="user-role">$rol</div>
                 </div>
             </div>
-            <a href="?logout=1" class="btn btn-outline-light btn-sm w-100 d-flex justify-content-center align-items-center">
+            <button type="button" class="btn btn-outline-light btn-sm w-100 d-flex justify-content-center align-items-center" data-bs-toggle="modal" data-bs-target="#logoutModal">
                 <i class="bi bi-box-arrow-right me-2"></i>Cerrar Sesión
-            </a>
+            </button>
         </div>
     </nav>
 
@@ -269,6 +274,25 @@ print <<"HTML";
             </div>
         </div>
         
+    </div>
+
+    <!-- Logout Modal -->
+    <div class="modal fade" id="logoutModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0 shadow">
+                <div class="modal-header border-bottom-0 bg-light">
+                    <h5 class="modal-title fw-bold" style="color: #6B2D8B;">Cerrar Sesión</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-4 text-center">
+                    <p class="mb-0 fs-5">¿Estás seguro que deseas cerrar sesión?</p>
+                </div>
+                <div class="modal-footer border-top-0 bg-light justify-content-center">
+                    <button type="button" class="btn btn-outline-secondary px-4 rounded-pill" data-bs-dismiss="modal">Cancelar</button>
+                    <a href="?logout=1" class="btn text-white px-4 rounded-pill" style="background-color: #6B2D8B;">Sí, cerrar sesión</a>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap\@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
