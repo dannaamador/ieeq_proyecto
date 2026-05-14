@@ -1,3 +1,23 @@
+#!/bin/bash
+
+echo "=== Iniciando despliegue IEEQ ==="
+
+# 1. Actualizar desde git
+cd ~/ieeq_proyecto
+git pull
+git merge origin/main
+
+# 2. Copiar archivos al servidor
+sudo cp -r ~/ieeq_proyecto/ieeq-registro/* /var/www/html/ieeq-registro/
+
+# 3. Corregir shebang y saltos de línea
+echo "Corrigiendo scripts Perl..."
+sudo find /var/www/html/ieeq-registro/ -name "*.pl" -exec sed -i 's|#!C:\\xampp\\perl\\bin\\perl.exe|#!/usr/bin/perl|g' {} \;
+sudo find /var/www/html/ieeq-registro/ -name "*.pl" -exec sed -i 's/\r//' {} \;
+
+# 4. Reescribir db.pl para Linux
+echo "Configurando db.pl para Linux..."
+sudo tee /var/www/html/ieeq-registro/db.pl << 'DBEOF'
 #!/usr/bin/perl
 use strict;
 use warnings;
@@ -97,3 +117,13 @@ sub execute_query_write {
 }
 
 1;
+DBEOF
+
+# 5. Permisos correctos
+echo "Aplicando permisos..."
+sudo chown -R www-data:www-data /var/www/html/ieeq-registro/
+sudo find /var/www/html/ieeq-registro/ -name "*.pl" -exec chmod 755 {} \;
+sudo chmod -R 775 /var/www/html/ieeq-registro/uploads/
+sudo chmod -R 775 /var/www/html/ieeq-registro/.sesiones/
+
+echo "=== Despliegue completado ==="
