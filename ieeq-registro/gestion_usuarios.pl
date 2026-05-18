@@ -36,17 +36,21 @@ if ($cgi->request_method() eq 'POST') {
         my $password = $cgi->param('password');
         my $rol = $cgi->param('rol');
         my $activo = $cgi->param('activo') ? 1 : 0;
+        my $correo = $cgi->param('correo_electronico') || '';
         
-        if ($username && $nombre && $password && $rol) {
+        if ($username && $nombre && $password && $rol && $correo) {
             my $hash = sha256_hex($password);
-            my $sql = "INSERT INTO usuarios (username, contrasena, nombre_completo, rol, activo) VALUES (?, ?, ?, ?, ?)";
-            if (execute_query_write($sql, $username, $hash, $nombre, $rol, $activo)) {
+            my $sql = "INSERT INTO usuarios (username, contrasena, nombre_completo, rol, activo, correo_electronico) VALUES (?, ?, ?, ?, ?, ?)";
+            if (execute_query_write($sql, $username, $hash, $nombre, $rol, $activo, $correo)) {
                 $mensaje = "Usuario creado exitosamente.";
                 $tipo_mensaje = "success";
             } else {
-                $mensaje = "Error al crear usuario. Verifica que el username no esté duplicado.";
+                $mensaje = "Error al crear usuario. Verifica que el username o correo no esté duplicado.";
                 $tipo_mensaje = "danger";
             }
+        } else {
+            $mensaje = "Todos los campos (incluyendo correo) son requeridos.";
+            $tipo_mensaje = "danger";
         }
     }
     elsif ($accion eq 'editar') {
@@ -56,28 +60,32 @@ if ($cgi->request_method() eq 'POST') {
         my $password = $cgi->param('password');
         my $rol = $cgi->param('rol');
         my $activo = $cgi->param('activo') ? 1 : 0;
+        my $correo = $cgi->param('correo_electronico') || '';
         
-        if ($id && $username && $nombre && $rol) {
+        if ($id && $username && $nombre && $rol && $correo) {
             if ($password) {
                 my $hash = sha256_hex($password);
-                my $sql = "UPDATE usuarios SET username=?, nombre_completo=?, rol=?, activo=?, contrasena=? WHERE id_usuario=?";
-                if (execute_query_write($sql, $username, $nombre, $rol, $activo, $hash, $id)) {
+                my $sql = "UPDATE usuarios SET username=?, nombre_completo=?, rol=?, activo=?, contrasena=?, correo_electronico=? WHERE id_usuario=?";
+                if (execute_query_write($sql, $username, $nombre, $rol, $activo, $hash, $correo, $id)) {
                     $mensaje = "Usuario actualizado exitosamente.";
                     $tipo_mensaje = "success";
                 } else {
-                    $mensaje = "Error al actualizar. Verifica el username.";
+                    $mensaje = "Error al actualizar. Verifica el username o correo.";
                     $tipo_mensaje = "danger";
                 }
             } else {
-                my $sql = "UPDATE usuarios SET username=?, nombre_completo=?, rol=?, activo=? WHERE id_usuario=?";
-                if (execute_query_write($sql, $username, $nombre, $rol, $activo, $id)) {
+                my $sql = "UPDATE usuarios SET username=?, nombre_completo=?, rol=?, activo=?, correo_electronico=? WHERE id_usuario=?";
+                if (execute_query_write($sql, $username, $nombre, $rol, $activo, $correo, $id)) {
                     $mensaje = "Usuario actualizado exitosamente.";
                     $tipo_mensaje = "success";
                 } else {
-                    $mensaje = "Error al actualizar. Verifica el username.";
+                    $mensaje = "Error al actualizar. Verifica el username o correo.";
                     $tipo_mensaje = "danger";
                 }
             }
+        } else {
+            $mensaje = "Todos los campos (incluyendo correo) son requeridos.";
+            $tipo_mensaje = "danger";
         }
     }
     elsif ($accion eq 'toggle_activo') {
@@ -95,13 +103,16 @@ if ($cgi->request_method() eq 'POST') {
 }
 
 # Obtener lista de usuarios
-my @usuarios = execute_query_list("SELECT id_usuario, username, nombre_completo, rol, activo FROM usuarios ORDER BY id_usuario DESC");
+my @usuarios = execute_query_list("SELECT id_usuario, username, nombre_completo, rol, activo, correo_electronico FROM usuarios ORDER BY id_usuario DESC");
 
 my $filas_html = '';
 for my $u (@usuarios) {
     my $badge_class = $u->{activo} == 1 ? 'bg-success' : 'bg-danger';
     my $estado_texto = $u->{activo} == 1 ? 'Activo' : 'Inactivo';
     
+    my $correo_esc = $u->{correo_electronico} || '';
+    $correo_esc =~ s/'/\\'/g;
+
     my @words = split /\s+/, $u->{nombre_completo};
     my $initials = uc(substr($words[0] || '', 0, 1));
     $initials .= uc(substr($words[1], 0, 1)) if @words > 1;
@@ -128,11 +139,11 @@ AVATAR
     <tr>
         <td class="ps-4 fw-semibold text-secondary align-middle">$u->{id_usuario}</td>
         <td class="align-middle">$avatar</td>
-        <td class="align-middle"><strong>$u->{username}</strong></td>
+        <td class="align-middle"><strong>$u->{username}</strong><br><small class="text-muted">$u->{correo_electronico}</small></td>
         <td class="text-capitalize align-middle"><span class="badge $rol_badge_class px-2 py-1">$u->{rol}</span></td>
         <td class="align-middle"><span class="badge $badge_class px-3 py-2 rounded-pill">$estado_texto</span></td>
         <td class="pe-4 align-middle">
-            <button class="btn btn-sm btn-outline-primary me-1" onclick="abrirModalEditar($u->{id_usuario}, '$u->{username}', '$u->{nombre_completo}', '$u->{rol}', $u->{activo})">
+            <button class="btn btn-sm btn-outline-primary me-1" onclick="abrirModalEditar($u->{id_usuario}, '$u->{username}', '$u->{nombre_completo}', '$correo_esc', '$u->{rol}', $u->{activo})">
                 <i class="bi bi-pencil"></i>
             </button>
             <form method="POST" style="display:inline;">
@@ -326,6 +337,13 @@ print <<"HTML";
                                 <div class="invalid-feedback">Ingresa un nombre de usuario.</div>
                             </div>
                         </div>
+                        <div class="row">
+                            <div class="col-md-12 mb-3">
+                                <label class="form-label fw-semibold">Correo Electrónico</label>
+                                <input type="email" class="form-control" name="correo_electronico" required placeholder="Ej. correo\@ieeq.mx">
+                                <div class="invalid-feedback">Ingresa un correo electrónico válido.</div>
+                            </div>
+                        </div>
 
                         <div class="row">
                             <div class="col-md-6 mb-3">
@@ -386,6 +404,13 @@ print <<"HTML";
                                 <label class="form-label fw-semibold">Username</label>
                                 <input type="text" class="form-control" name="username" id="edit_username" required>
                                 <div class="invalid-feedback">Ingresa un nombre de usuario.</div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-12 mb-3">
+                                <label class="form-label fw-semibold">Correo Electrónico</label>
+                                <input type="email" class="form-control" name="correo_electronico" id="edit_correo" required placeholder="Ej. correo\@ieeq.mx">
+                                <div class="invalid-feedback">Ingresa un correo válido.</div>
                             </div>
                         </div>
 
@@ -493,10 +518,11 @@ print <<"HTML";
             }
         }
 
-        function abrirModalEditar(id, username, nombre, rol, activo) {
+        function abrirModalEditar(id, username, nombre, correo, rol, activo) {
             document.getElementById('edit_id').value = id;
             document.getElementById('edit_username').value = username;
             document.getElementById('edit_nombre').value = nombre;
+            document.getElementById('edit_correo').value = correo;
             document.getElementById('edit_rol').value = rol;
             document.getElementById('edit_activo').checked = (activo == 1);
             var modal = new bootstrap.Modal(document.getElementById('modalEditar'));
