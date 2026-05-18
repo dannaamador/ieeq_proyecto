@@ -119,9 +119,8 @@ AVATAR
 
     my %colores_rol = (
         'administrador' => 'bg-ieeq-purple',
-        'operador' => 'bg-primary',
-        'validador' => 'bg-warning',
-        'lectura' => 'bg-secondary'
+        'funcionario' => 'bg-primary',
+        'integrante_organizacion' => 'bg-success'
     );
     my $rol_badge_class = $colores_rol{$u->{rol}} || 'bg-dark';
 
@@ -341,11 +340,10 @@ print <<"HTML";
                             <div class="col-md-6 mb-3">
                                 <label class="form-label fw-semibold">Rol del Sistema</label>
                                 <select class="form-select" name="rol" required>
-                                    <option value="">Selecciona un rol...</option>
-                                    <option value="administrador">Administrador</option>
-                                    <option value="operador">Operador</option>
-                                    <option value="validador">Validador</option>
-                                    <option value="lectura">Lectura</option>
+                                    <option value="">Selecciona un tipo...</option>
+                                    <option value="administrador">Administrador del Sistema</option>
+                                    <option value="funcionario">Funcionario del IEEQ</option>
+                                    <option value="integrante_organizacion">Integrante de la Organización</option>
                                 </select>
                                 <div class="invalid-feedback">Debes seleccionar un rol.</div>
                             </div>
@@ -403,10 +401,9 @@ print <<"HTML";
                             <div class="col-md-6 mb-3">
                                 <label class="form-label fw-semibold">Rol del Sistema</label>
                                 <select class="form-select" name="rol" id="edit_rol" required>
-                                    <option value="administrador">Administrador</option>
-                                    <option value="operador">Operador</option>
-                                    <option value="validador">Validador</option>
-                                    <option value="lectura">Lectura</option>
+                                    <option value="administrador">Administrador del Sistema</option>
+                                    <option value="funcionario">Funcionario del IEEQ</option>
+                                    <option value="integrante_organizacion">Integrante de la Organización</option>
                                 </select>
                             </div>
                         </div>
