@@ -37,37 +37,37 @@ if ($rol eq 'administrador') {
             <a class="nav-link text-white" href="gestion_usuarios.pl"><i class="bi bi-people me-2"></i>Gestión de Usuarios</a>
         </li>
         <li class="nav-item">
-            <a class="nav-link text-white" href="#"><i class="bi bi-shield-lock me-2"></i>Gestión de Permisos</a>
+            <a class="nav-link text-white" href="gestion_permisos.pl"><i class="bi bi-shield-lock me-2"></i>Gestión de Permisos</a>
         </li>
         <li class="nav-item">
-            <a class="nav-link text-white" href="#"><i class="bi bi-journal-text me-2"></i>Auditoría</a>
+            <a class="nav-link text-white" href="auditoria.pl"><i class="bi bi-journal-text me-2"></i>Auditoría</a>
         </li>
 MENU
 } elsif ($rol eq 'funcionario') {
     $menu_html .= <<'MENU';
         <li class="nav-item">
-            <a class="nav-link text-white" href="#"><i class="bi bi-person-check me-2"></i>Verificación de Afiliación</a>
+            <a class="nav-link text-white" href="verificacion_afiliacion.pl"><i class="bi bi-person-check me-2"></i>Verificación de Afiliación</a>
         </li>
         <li class="nav-item">
-            <a class="nav-link text-white" href="#"><i class="bi bi-person-badge me-2"></i>Verificación de Auxiliares</a>
+            <a class="nav-link text-white" href="verificacion_auxiliares.pl"><i class="bi bi-person-badge me-2"></i>Verificación de Auxiliares</a>
         </li>
         <li class="nav-item">
-            <a class="nav-link text-white" href="#"><i class="bi bi-search me-2"></i>Consulta de Registros</a>
+            <a class="nav-link text-white" href="consulta_registros.pl"><i class="bi bi-search me-2"></i>Consulta de Registros</a>
         </li>
         <li class="nav-item">
-            <a class="nav-link text-white" href="#"><i class="bi bi-file-earmark-bar-graph me-2"></i>Reportes</a>
+            <a class="nav-link text-white" href="reportes.pl"><i class="bi bi-file-earmark-bar-graph me-2"></i>Reportes</a>
         </li>
 MENU
 } elsif ($rol eq 'integrante_organizacion') {
     $menu_html .= <<'MENU';
         <li class="nav-item">
-            <a class="nav-link text-white" href="#"><i class="bi bi-person-plus me-2"></i>Registro de Afiliados</a>
+            <a class="nav-link text-white" href="registro_afiliados.pl"><i class="bi bi-person-plus me-2"></i>Registro de Afiliados</a>
         </li>
         <li class="nav-item">
-            <a class="nav-link text-white" href="#"><i class="bi bi-person-vcard me-2"></i>Registro de Auxiliares</a>
+            <a class="nav-link text-white" href="registro_auxiliares.pl"><i class="bi bi-person-vcard me-2"></i>Registro de Auxiliares</a>
         </li>
         <li class="nav-item">
-            <a class="nav-link text-white" href="#"><i class="bi bi-search me-2"></i>Consulta de Registros</a>
+            <a class="nav-link text-white" href="consulta_registros.pl"><i class="bi bi-search me-2"></i>Consulta de Registros</a>
         </li>
 MENU
 }

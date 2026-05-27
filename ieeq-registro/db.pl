@@ -1,9 +1,10 @@
 #!C:\xampp\perl\bin\perl.exe
 use strict;
 use warnings;
+use Encode qw(decode_utf8);
 
 # Configuración centralizada de base de datos
-our $db_host = '172.23.80.1';
+our $db_host = '127.0.0.1';
 our $db_port = '3306';
 our $db_name = 'ieeq_registro';
 our $db_user = 'root';
@@ -19,12 +20,12 @@ sub get_user_by_username {
     # Escapar comillas para prevenir inyección SQL en consola
     $username =~ s/'/\\'/g;
     
-    my $query = "SELECT id_usuario, username, nombre_completo, rol, contrasena, activo FROM usuarios WHERE username = '$username'";
+    my $query = "SELECT id_usuario, username, nombre_completo, rol, contrasena, activo FROM usuarios WHERE username = '$username' OR correo_electronico = '$username'";
     
     # Ejecutar consulta en modo Batch (-B) que devuelve separado por tabulaciones
-    my $cmd = "\"$mysql_bin\" -h $db_host -P $db_port -u $db_user -p$db_pass $db_name -B -e \"$query\"";
+    my $cmd = "\"$mysql_bin\" --default-character-set=utf8mb4 -h $db_host -P $db_port -u $db_user -p$db_pass $db_name -B -e \"$query\"";
     
-    my $output = `$cmd 2>&1`;
+    my $output = decode_utf8(`$cmd 2>&1`);
     
     my @lines = split /\r?\n/, $output;
     
@@ -68,9 +69,9 @@ sub _build_safe_query {
 sub execute_query_list {
     my ($sql, @params) = @_;
     my $safe_sql = _build_safe_query($sql, @params);
-    my $cmd = "\"$mysql_bin\" -h $db_host -P $db_port -u $db_user -p$db_pass $db_name -B -e \"$safe_sql\"";
+    my $cmd = "\"$mysql_bin\" --default-character-set=utf8mb4 -h $db_host -P $db_port -u $db_user -p$db_pass $db_name -B -e \"$safe_sql\"";
     
-    my $output = `$cmd 2>&1`;
+    my $output = decode_utf8(`$cmd 2>&1`);
     my @lines = split /\r?\n/, $output;
     my @results;
     
@@ -94,9 +95,9 @@ sub execute_query_list {
 sub execute_query_write {
     my ($sql, @params) = @_;
     my $safe_sql = _build_safe_query($sql, @params);
-    my $cmd = "\"$mysql_bin\" -h $db_host -P $db_port -u $db_user -p$db_pass $db_name -e \"$safe_sql\"";
+    my $cmd = "\"$mysql_bin\" --default-character-set=utf8mb4 -h $db_host -P $db_port -u $db_user -p$db_pass $db_name -e \"$safe_sql\"";
     
-    my $output = `$cmd 2>&1`;
+    my $output = decode_utf8(`$cmd 2>&1`);
     return $? == 0; # Verdadero si tuvo éxito
 }
 

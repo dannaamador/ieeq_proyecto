@@ -248,9 +248,8 @@ print <<"HTML";
             <li class="nav-item">
                 <a href="gestion_usuarios.pl" class="nav-link active"><i class="bi bi-people me-2"></i>Gestión de Usuarios</a>
             </li>
-            <li class="nav-item"><a href="#" class="nav-link"><i class="bi bi-person-plus me-2"></i>Registrar Persona</a></li>
-            <li class="nav-item"><a href="#" class="nav-link"><i class="bi bi-check2-square me-2"></i>Validación</a></li>
-            <li class="nav-item"><a href="#" class="nav-link"><i class="bi bi-file-earmark-bar-graph me-2"></i>Reportes</a></li>
+            <li class="nav-item"><a href="gestion_permisos.pl" class="nav-link"><i class="bi bi-shield-lock me-2"></i>Gestión de Permisos</a></li>
+            <li class="nav-item"><a href="auditoria.pl" class="nav-link"><i class="bi bi-journal-text me-2"></i>Auditoría</a></li>
         </ul>
         <div class="user-section">
             <div class="d-flex align-items-center mb-3">
