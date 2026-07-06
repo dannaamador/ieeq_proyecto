@@ -311,21 +311,27 @@ print <<'LOGOUT_JS';
     if (btnLogout) {
         btnLogout.addEventListener('click', function (e) {
             e.preventDefault();
-            Swal.fire({
-                title: '¿Cerrar Sesión?',
-                text: '¿Está seguro de que desea salir del sistema?',
-                icon: 'question',
-                showCancelButton: true,
-                confirmButtonColor: '#6B2D8B',
-                cancelButtonColor: '#6c757d',
-                confirmButtonText: 'Sí, salir',
-                cancelButtonText: 'Cancelar',
-                customClass: { popup: 'rounded-4 border-0 shadow' }
-            }).then(function (result) {
-                if (result.isConfirmed) {
-                    window.location.href = 'dashboard.pl?logout=1';
+            if (typeof Swal !== 'undefined') {
+                Swal.fire({
+                    title: '¿Cerrar Sesión?',
+                    text: '¿Está seguro de que desea salir del sistema?',
+                    icon: 'question',
+                    showCancelButton: true,
+                    confirmButtonColor: '#6B2D8B',
+                    cancelButtonColor: '#6c757d',
+                    confirmButtonText: 'Sí, salir',
+                    cancelButtonText: 'Cancelar',
+                    customClass: { popup: 'rounded-4 border-0 shadow' }
+                }).then(function (result) {
+                    if (result.isConfirmed) {
+                        window.location.href = 'login.pl?logout=1';
+                    }
+                });
+            } else {
+                if (confirm('¿Está seguro de que desea salir del sistema?')) {
+                    window.location.href = 'login.pl?logout=1';
                 }
-            });
+            }
         });
     }
 
