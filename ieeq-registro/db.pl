@@ -20,7 +20,7 @@ sub get_user_by_username {
     # Escapar comillas para prevenir inyección SQL en consola
     $username =~ s/'/\\'/g;
     
-    my $query = "SELECT id_usuario, username, nombre_completo, rol, contrasena, activo FROM usuarios WHERE username = '$username' OR correo_electronico = '$username'";
+    my $query = "SELECT id_usuario, correo_electronico AS username, CONCAT(nombre, ' ', apellido_paterno, COALESCE(CONCAT(' ', apellido_materno), '')) AS nombre_completo, CASE tipo_usuario WHEN 'ADMINISTRADOR' THEN 'administrador' WHEN 'FUNCIONARIO_IEEQ' THEN 'funcionario' WHEN 'AUXILIAR' THEN 'integrante_organizacion' END AS rol, contrasena, activo FROM usuarios WHERE correo_electronico = '$username'";
     
     # Ejecutar consulta en modo Batch (-B) que devuelve separado por tabulaciones
     my $cmd = "\"$mysql_bin\" --default-character-set=utf8mb4 -h $db_host -P $db_port -u $db_user -p$db_pass $db_name -B -e \"$query\"";
@@ -61,6 +61,9 @@ sub _build_safe_query {
     }
     $sql =~ s/\?/shift(@safe_params)/eg;
     
+    # Reemplazar saltos de línea con espacios para evitar que rompan la consola de Windows CMD
+    $sql =~ s/\r?\n/ /g;
+    
     # Escapar comillas dobles para que no rompa el string del CMD de Windows
     $sql =~ s/"/\\"/g;
     return $sql;
@@ -84,8 +87,16 @@ sub execute_query_list {
         my @values = split /\t/, $line;
         my %row;
         for my $i (0 .. $#headers) {
-            $values[$i] =~ s/^\s+|\s+$//g if defined $values[$i];
-            $row{$headers[$i]} = $values[$i];
+            if (defined $values[$i]) {
+                $values[$i] =~ s/^\s+|\s+$//g;
+                if ($values[$i] eq 'NULL') {
+                    $row{$headers[$i]} = undef;
+                } else {
+                    $row{$headers[$i]} = $values[$i];
+                }
+            } else {
+                $row{$headers[$i]} = undef;
+            }
         }
         push @results, \%row;
     }

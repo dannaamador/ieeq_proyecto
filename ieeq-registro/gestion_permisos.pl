@@ -1,6 +1,7 @@
 #!C:\xampp\perl\bin\perl.exe
 use strict;
 use warnings;
+use utf8;
 use CGI;
 use CGI::Session;
 use JSON;
@@ -8,6 +9,18 @@ use FindBin;
 require "$FindBin::Bin/db.pl";
 
 my $cgi = CGI->new;
+
+# Configurar salida UTF-8
+binmode(STDOUT, ":utf8");
+
+# Evitar doble codificación UTF-8 en encode_json al usar binmode :utf8
+no warnings 'redefine';
+sub encode_json ($) {
+    return JSON->new->utf8(0)->encode($_[0]);
+}
+use warnings 'redefine';
+
+
 my $session = CGI::Session->new(undef, $cgi, {Directory => "$FindBin::Bin/.sesiones"});
 
 my $rol = $session->param('rol') || '';
@@ -21,64 +34,144 @@ if ($rol ne 'administrador') {
 my $accion = $cgi->param('accion') || '';
 
 # ==========================================
+# ENDPOINT: get_usuarios
+# ==========================================
+if ($accion eq 'get_usuarios') {
+    my @usuarios = execute_query_list(
+        "SELECT id_usuario, CONCAT(nombre,' ',apellido_paterno,COALESCE(CONCAT(' ',apellido_materno),'')) AS nombre_completo,
+                correo_electronico, tipo_usuario
+         FROM usuarios WHERE activo = 1 ORDER BY nombre_completo ASC"
+    );
+    print $cgi->header(-type => 'application/json', -charset => 'utf-8');
+    print encode_json({ success => 1, usuarios => \@usuarios });
+    exit;
+}
+
+# ==========================================
 # ENDPOINT: get_permisos
 # ==========================================
 if ($accion eq 'get_permisos') {
     my $id_usuario = $cgi->param('id_usuario');
     if ($id_usuario) {
-        my @permisos = execute_query_list("SELECT id_opcion, puede_ver, puede_editar FROM permisos_usuario WHERE id_usuario = ?", $id_usuario);
+        # Intentar cargar módulos desde la tabla (si existe)
+        my @modulos = execute_query_list(
+            "SELECT id_modulo, nombre_modulo FROM modulos_sistema ORDER BY id_modulo ASC"
+        );
+        # Si no existe la tabla modulos_sistema, usar listado hardcodeado
+        if (!@modulos) {
+            @modulos = (
+                { id_modulo => 1,  nombre_modulo => 'Gestión de Usuarios'      },
+                { id_modulo => 2,  nombre_modulo => 'Gestión de Permisos'      },
+                { id_modulo => 3,  nombre_modulo => 'Asociación'               },
+                { id_modulo => 4,  nombre_modulo => 'Padrón de Referencia'     },
+                { id_modulo => 5,  nombre_modulo => 'Registro de Afiliaciones' },
+                { id_modulo => 6,  nombre_modulo => 'Listado de Afiliados'     },
+                { id_modulo => 7,  nombre_modulo => 'Cédulas'                  },
+                { id_modulo => 8,  nombre_modulo => 'Bitácora'                 },
+                { id_modulo => 9,  nombre_modulo => 'Verificación'             },
+            );
+        }
+        # Intentar permisos con columna id_modulo (v3)
+        my @permisos = execute_query_list(
+            "SELECT id_modulo, puede_ver, puede_editar FROM permisos_usuario WHERE id_usuario = ?",
+            $id_usuario
+        );
+        # Fallback: intentar con id_opcion (v2 legacy)
+        if (!@permisos) {
+            @permisos = execute_query_list(
+                "SELECT id_opcion AS id_modulo, puede_ver, puede_editar FROM permisos_usuario WHERE id_usuario = ?",
+                $id_usuario
+            );
+        }
         my %perm_hash;
         for my $p (@permisos) {
-            $perm_hash{$p->{id_opcion}} = {
-                puede_ver    => $p->{puede_ver} ? 1 : 0,
+            my $key = $p->{id_modulo} // $p->{id_opcion};
+            $perm_hash{$key} = {
+                puede_ver    => $p->{puede_ver}    ? 1 : 0,
                 puede_editar => $p->{puede_editar} ? 1 : 0
             };
         }
         print $cgi->header(-type => 'application/json', -charset => 'utf-8');
-        print encode_json({ success => 1, permisos => \%perm_hash });
+        print encode_json({ success => 1, modulos => \@modulos, permisos => \%perm_hash });
         exit;
     }
     print $cgi->header(-type => 'application/json', -charset => 'utf-8');
     print encode_json({ success => 0, message => 'ID de usuario no proporcionado' });
     exit;
 }
+
 # ==========================================
 # ENDPOINT: save_permisos
 # ==========================================
-elsif ($accion eq 'save_permisos') {
-    my $id_usuario = $cgi->param('id_usuario');
+if ($accion eq 'save_permisos') {
+    my $id_usuario    = $cgi->param('id_usuario');
     my $permisos_json = $cgi->param('permisos_json');
-    
+
     if ($id_usuario && $permisos_json) {
         my $permisos;
-        eval {
-            $permisos = decode_json($permisos_json);
-        };
+        eval { $permisos = decode_json($permisos_json); };
         if ($@) {
             print $cgi->header(-type => 'application/json', -charset => 'utf-8');
             print encode_json({ success => 0, message => 'JSON inválido' });
             exit;
         }
-        
+
         my $errors = 0;
-        my @existentes = execute_query_list("SELECT id_opcion FROM permisos_usuario WHERE id_usuario = ?", $id_usuario);
-        my %tiene_opcion;
-        $tiene_opcion{$_->{id_opcion}} = 1 for @existentes;
-        
+
+        # Detectar columna disponible (id_modulo v3 o id_opcion legacy)
+        my @existentes_mod = execute_query_list(
+            "SELECT id_modulo FROM permisos_usuario WHERE id_usuario = ?", $id_usuario
+        );
+        my @existentes_op = ();
+        if (!@existentes_mod) {
+            @existentes_op = execute_query_list(
+                "SELECT id_opcion FROM permisos_usuario WHERE id_usuario = ?", $id_usuario
+            );
+        }
+
+        my %tiene_reg;
+        if (@existentes_mod) {
+            $tiene_reg{$_->{id_modulo}} = 1 for @existentes_mod;
+        } else {
+            $tiene_reg{$_->{id_opcion}} = 1 for @existentes_op;
+        }
+
+        my $use_modulo_col = @existentes_mod ? 1 : 0;
+
         for my $p (@$permisos) {
-            my $id_op = $p->{id_opcion};
-            my $ver = $p->{puede_ver} ? 1 : 0;
+            my $id_mod = $p->{id_modulo};
+            my $ver    = $p->{puede_ver}    ? 1 : 0;
             my $editar = $p->{puede_editar} ? 1 : 0;
-            
-            if ($tiene_opcion{$id_op}) {
-                my $sql = "UPDATE permisos_usuario SET puede_ver=?, puede_editar=? WHERE id_usuario=? AND id_opcion=?";
-                $errors++ unless execute_query_write($sql, $ver, $editar, $id_usuario, $id_op);
+
+            if ($use_modulo_col) {
+                if ($tiene_reg{$id_mod}) {
+                    my $sql = "UPDATE permisos_usuario SET puede_ver=?, puede_editar=? WHERE id_usuario=? AND id_modulo=?";
+                    $errors++ unless execute_query_write($sql, $ver, $editar, $id_usuario, $id_mod);
+                } else {
+                    my $sql = "INSERT INTO permisos_usuario (id_usuario, id_modulo, puede_ver, puede_editar) VALUES (?, ?, ?, ?)";
+                    $errors++ unless execute_query_write($sql, $id_usuario, $id_mod, $ver, $editar);
+                }
             } else {
-                my $sql = "INSERT INTO permisos_usuario (id_usuario, id_opcion, puede_ver, puede_editar) VALUES (?, ?, ?, ?)";
-                $errors++ unless execute_query_write($sql, $id_usuario, $id_op, $ver, $editar);
+                # Legacy: id_opcion
+                if ($tiene_reg{$id_mod}) {
+                    my $sql = "UPDATE permisos_usuario SET puede_ver=?, puede_editar=? WHERE id_usuario=? AND id_opcion=?";
+                    $errors++ unless execute_query_write($sql, $ver, $editar, $id_usuario, $id_mod);
+                } else {
+                    my $sql = "INSERT INTO permisos_usuario (id_usuario, id_opcion, puede_ver, puede_editar) VALUES (?, ?, ?, ?)";
+                    $errors++ unless execute_query_write($sql, $id_usuario, $id_mod, $ver, $editar);
+                }
             }
         }
-        
+
+
+        # Registrar en bitácora
+        my $id_sess_user = $session->param('id_usuario') || 0;
+        execute_query_write(
+            "INSERT INTO bitacora (id_usuario, accion, modulo, detalles, fecha) VALUES (?, 'EDICION', 'permisos_usuario', ?, NOW())",
+            $id_sess_user,
+            "Permisos actualizados para usuario ID $id_usuario"
+        );
+
         print $cgi->header(-type => 'application/json', -charset => 'utf-8');
         if ($errors == 0) {
             print encode_json({ success => 1, message => 'Permisos actualizados correctamente' });
@@ -95,21 +188,24 @@ elsif ($accion eq 'save_permisos') {
 # ==========================================
 # RENDER HTML
 # ==========================================
-my @todos_usuarios = execute_query_list("SELECT id_usuario, nombre_completo, correo_electronico, rol FROM usuarios ORDER BY nombre_completo ASC");
+# Cargar lista inicial de usuarios para el selector
+my @todos_usuarios = execute_query_list(
+    "SELECT id_usuario,
+            CONCAT(nombre,' ',apellido_paterno,COALESCE(CONCAT(' ',apellido_materno),'')) AS nombre_completo,
+            correo_electronico, tipo_usuario
+     FROM usuarios WHERE activo = 1 ORDER BY nombre_completo ASC"
+);
 my $usuarios_json = encode_json(\@todos_usuarios);
-my $usuarios_json_escaped = $usuarios_json;
-$usuarios_json_escaped =~ s/&/&amp;/g;
-$usuarios_json_escaped =~ s/"/&quot;/g;
-$usuarios_json_escaped =~ s/'/&#39;/g;
-$usuarios_json_escaped =~ s/</&lt;/g;
-$usuarios_json_escaped =~ s/>/&gt;/g;
+
+# Para el sidebar
+my $pagina_activa = 'PERMISOS';
 
 print $cgi->header(
-    -type => 'text/html', 
-    -charset => 'utf-8',
-    -expires => 'now',
+    -type         => 'text/html',
+    -charset      => 'utf-8',
+    -expires      => 'now',
     -Cache_Control => 'no-store, no-cache, must-revalidate, max-age=0',
-    -Pragma => 'no-cache'
+    -Pragma       => 'no-cache'
 );
 
 print <<"HTML";
@@ -120,316 +216,341 @@ print <<"HTML";
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Gestión de Permisos - IEEQ</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap\@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons\@1.11.1/font/bootstrap-icons.css">
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght\@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons\@1.11.3/font/bootstrap-icons.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght\@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2\@11"></script>
     <style>
-        body { font-family: 'Outfit', sans-serif; background-color: #f8f9fa; overflow-x: hidden; }
-        
-        /* Sidebar Styling */
-        #sidebar {
-            width: 280px; height: 100vh; position: fixed; left: 0; top: 0;
-            background: linear-gradient(180deg, #6B2D8B 0%, #4a1f61 100%);
-            color: white; z-index: 1000; display: flex; flex-direction: column;
-        }
-        .sidebar-header { padding: 2rem 1.5rem; border-bottom: 1px solid rgba(255,255,255,0.1); }
-        .sidebar-header h3 { font-weight: 700; margin: 0; letter-spacing: 1px; }
-        .sidebar-header p { margin: 0; font-size: 0.85rem; opacity: 0.8; }
-        .nav-link { color: rgba(255,255,255,0.8); padding: 0.8rem 1.5rem; margin: 0.2rem 1rem; border-radius: 8px; transition: all 0.3s; }
-        .nav-link:hover { background: rgba(255,255,255,0.1); color: white; transform: translateX(5px); }
-        .nav-link.active { background: rgba(255,255,255,0.2); color: white; font-weight: 600; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
-        .user-section { padding: 1.5rem; background: rgba(0,0,0,0.15); margin-top: auto; border-top: 1px solid rgba(255,255,255,0.05); }
-        .user-name { font-weight: 600; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; }
-        .user-role { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; color: #d1a3e6; }
+        * { box-sizing: border-box; }
+        body { font-family: 'Outfit', sans-serif; background-color: #f5f5f8; overflow-x: hidden; margin: 0; }
+        #content { margin-left: 260px; min-height: 100vh; padding: 2rem; transition: margin-left 0.3s ease; }
 
-        /* Main Content Styling */
-        #content { margin-left: 280px; min-height: 100vh; padding: 2rem; transition: all 0.3s; }
-        .top-header {
-            background: #ffffff; padding: 1rem 2rem; border-radius: 12px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.03); margin-bottom: 2rem;
+        /* ── Top header ── */
+        .page-header {
             display: flex; justify-content: space-between; align-items: center;
+            background: #fff; padding: 1rem 1.5rem; border-radius: 14px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.05); margin-bottom: 1.5rem;
         }
-        .card-ieeq { border: none; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
-        .card-ieeq .card-header { background-color: #fff; border-bottom: 1px solid #f0f0f0; padding: 1.5rem; border-radius: 12px 12px 0 0; }
-        .form-select { border-radius: 20px; padding: 0.6rem 1.2rem; border: 1px solid #6B2D8B; }
-        .form-select:focus { box-shadow: 0 0 0 0.25rem rgba(107, 45, 139, 0.25); border-color: #6B2D8B; }
-        .btn-ieeq { background-color: #6B2D8B; color: white; border: none; }
-        .btn-ieeq:hover { background-color: #4a1f61; color: white; }
-        
-        .avatar-circle { width: 60px; height: 60px; border-radius: 50%; background-color: #e9ecef; color: #6B2D8B; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: bold; margin-bottom: 1rem; }
-        
-        /* Table Styles */
-        .table-permissions th { font-weight: 600; color: #495057; border-bottom: 2px solid #dee2e6; }
-        .table-permissions td { vertical-align: middle; }
-        .section-row td { background-color: #f8f9fa; font-weight: 600; color: #6B2D8B; letter-spacing: 0.5px; }
-        
-        /* Switch Styles */
-        .form-switch .form-check-input { width: 3em; height: 1.5em; cursor: pointer; }
-        .form-switch .form-check-input:checked { background-color: #6B2D8B; border-color: #6B2D8B; }
-        
-        /* Levels Panel */
-        .level-item { display: flex; align-items: center; margin-bottom: 1.2rem; }
-        .level-icon { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-right: 1rem; color: white; }
-        .level-icon.write { background-color: #20c997; }
-        .level-icon.read { background-color: #ffc107; }
-        .level-icon.none { background-color: #dc3545; }
-        
-        /* Loader Overlay */
-        .loader-overlay {
-            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(255,255,255,0.8); z-index: 10;
-            display: none; align-items: center; justify-content: center; flex-direction: column;
-            border-radius: 12px;
+        .page-header h4 { margin: 0; font-weight: 700; color: #1a1a2e; font-size: 1.3rem; }
+        .page-header p  { margin: 0; color: #6c757d; font-size: 0.85rem; }
+
+        /* ── Cards ── */
+        .card-ieeq {
+            background: #fff; border: none; border-radius: 14px;
+            box-shadow: 0 2px 16px rgba(0,0,0,0.06);
         }
-        .empty-state {
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
-            height: 100%; min-height: 400px; color: #6c757d; text-align: center;
+
+        /* ══════════════════════════════════════
+           SELECTOR DE USUARIO COMBINADO
+           ══════════════════════════════════════ */
+        .selector-wrap { position: relative; }
+
+        /* El "trigger" que aparece como dropdown de Bootstrap */
+        .selector-trigger {
+            display: flex; align-items: center; gap: 10px;
+            padding: 0.7rem 1rem; border: 1.5px solid #e0e0e0; border-radius: 12px;
+            cursor: pointer; transition: border-color .2s, box-shadow .2s;
+            background: #fff; user-select: none;
         }
-        .empty-state i { font-size: 4rem; color: #e9ecef; margin-bottom: 1rem; }
-        
-        /* Search results styling */
-        .user-search-item {
-            display: flex;
-            align-items: center;
-            padding: 0.75rem 1rem;
-            border-bottom: 1px solid #f0f0f0;
-            cursor: pointer;
-            transition: all 0.2s ease;
+        .selector-trigger:hover { border-color: #6B2D8B; }
+        .selector-trigger.open  { border-color: #6B2D8B; box-shadow: 0 0 0 3px rgba(107,45,139,.12); }
+        .trig-avatar {
+            width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 700; font-size: 0.85rem; color: #fff;
         }
-        .user-search-item:last-child {
-            border-bottom: none;
+        .trig-placeholder { color: #9e9e9e; font-size: 0.9rem; flex: 1; }
+        .trig-name  { font-weight: 700; font-size: 0.9rem; color: #1a1a2e; flex: 1; line-height:1.2; }
+        .trig-sub   { font-size: 0.72rem; color: #9e9e9e; }
+        .trig-chevron { color: #9e9e9e; font-size: 0.85rem; transition: transform .2s; flex-shrink:0; }
+        .selector-trigger.open .trig-chevron { transform: rotate(180deg); }
+
+        /* Dropdown panel */
+        .selector-panel {
+            position: absolute; top: calc(100% + 8px); left: 0; right: 0;
+            background: #fff; border-radius: 14px; border: 1px solid #e8e8e8;
+            box-shadow: 0 10px 36px rgba(0,0,0,.12); z-index: 1060;
+            display: none; flex-direction: column; overflow: hidden;
         }
-        .user-search-item:hover {
-            background-color: #f8f0fc;
+        .selector-panel.show { display: flex; }
+
+        /* Buscador dentro del dropdown */
+        .sel-search-wrap { padding: .75rem .85rem; border-bottom: 1px solid #f0f0f0; }
+        .sel-search {
+            width: 100%; padding: .5rem .85rem .5rem 2.4rem;
+            border: 1.5px solid #e0e0e0; border-radius: 9px;
+            font-family: 'Outfit', sans-serif; font-size: .85rem; outline: none;
+            transition: border-color .2s;
         }
-        .avatar-initials-small {
-            width: 36px;
-            height: 36px;
-            border-radius: 50%;
-            background-color: #f3e8f8;
-            color: #6B2D8B;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 0.85rem;
-            font-weight: 700;
+        .sel-search:focus { border-color: #6B2D8B; }
+        .sel-search-icon {
+            position: absolute; left: 1.5rem; top: 50%; transform: translateY(-50%);
+            color: #bdbdbd; font-size: .9rem; pointer-events: none;
+        }
+
+        /* Lista de usuarios */
+        .sel-list { max-height: 260px; overflow-y: auto; }
+        .sel-option {
+            display: flex; align-items: center; gap: 10px;
+            padding: .7rem 1rem; cursor: pointer; transition: background .15s;
+        }
+        .sel-option:hover { background: #f8f0fc; }
+        .sel-option:not(:last-child) { border-bottom: 1px solid #f5f5f5; }
+        .sel-option.sel-active { background: #f3e8f8; }
+        .u-avatar {
+            width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 700; font-size: 0.8rem; color: #fff;
+        }
+        .u-name  { font-weight: 600; font-size: 0.87rem; color: #1a1a2e; line-height:1.2; }
+        .u-email { font-size: 0.72rem; color: #9e9e9e; }
+        .sel-empty { padding: .9rem 1rem; color: #9e9e9e; font-size: .85rem; text-align:center; }
+
+        /* ── Tabla de permisos ── */
+        .perm-table { width: 100%; border-collapse: collapse; }
+        .perm-table thead tr {
+            background: #6B2D8B; color: #fff;
+        }
+        .perm-table thead th {
+            padding: 0.9rem 1.2rem; font-size: 0.78rem;
+            font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase;
+        }
+        .perm-table thead th:first-child { border-radius: 12px 0 0 0; }
+        .perm-table thead th:last-child  { border-radius: 0 12px 0 0; }
+        .perm-table tbody tr { border-bottom: 1px solid #f3f3f3; transition: background 0.15s; }
+        .perm-table tbody tr:hover { background: #faf5ff; }
+        .perm-table td { padding: 0.85rem 1.2rem; vertical-align: middle; }
+        .mod-icon {
+            width: 30px; height: 30px; border-radius: 50%;
+            background: #f3e8f8; color: #6B2D8B;
+            display: inline-flex; align-items: center; justify-content: center;
+            font-size: 0.85rem; flex-shrink: 0;
+        }
+        .mod-name { font-size: 0.88rem; color: #1a1a2e; font-weight: 500; }
+
+        /* ── Pills de nivel ── */
+        .perm-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+        .perm-pill {
+            padding: 5px 14px; border-radius: 20px; font-size: 0.76rem;
+            font-weight: 600; cursor: pointer; border: none; transition: all 0.2s;
+            background: #f0f0f0; color: #6c757d;
+        }
+        .perm-pill:hover { filter: brightness(0.95); }
+        .perm-pill.active-write  { background: #1a1a2e; color: #fff; }
+        .perm-pill.active-read   { background: #6B2D8B; color: #fff; }
+        .perm-pill.active-none   { background: #e8e8e8; color: #555; font-weight: 700; }
+
+        /* ── Bulk bar ── */
+        .bulk-bar {
+            display: none; align-items: center; gap: 10px; flex-wrap: wrap;
+            padding: 0.9rem 1.2rem; background: #faf5ff;
+            border-bottom: 1px solid #f0e8fa;
+        }
+        .bulk-bar.show { display: flex; }
+        .bulk-user-info { display: flex; align-items: center; gap: 10px; margin-right: auto; }
+        .bulk-av {
+            width: 38px; height: 38px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 700; font-size: 0.85rem; color: #fff; flex-shrink: 0;
+        }
+        .bulk-name  { font-weight: 700; font-size: 0.9rem; color: #1a1a2e; }
+        .bulk-email { font-size: 0.75rem; color: #6c757d; }
+        .btn-bulk {
+            padding: 6px 16px; border-radius: 20px; font-size: 0.78rem;
+            font-weight: 600; cursor: pointer; border: 1.5px solid transparent;
+            transition: all 0.2s; font-family: 'Outfit', sans-serif;
+        }
+        .btn-bulk-write { background: #1a1a2e; color: #fff; border-color: #1a1a2e; }
+        .btn-bulk-write:hover { background: #2d2d4e; }
+        .btn-bulk-read  { background: #6B2D8B; color: #fff; border-color: #6B2D8B; }
+        .btn-bulk-read:hover { background: #4a1f61; }
+        .btn-bulk-none  { background: #e8e8e8; color: #333; border-color: #ccc; }
+        .btn-bulk-none:hover { background: #ddd; }
+
+        /* ── Leyenda de niveles ── */
+        .nivel-card { background:#fff; border-radius:14px; box-shadow:0 2px 16px rgba(0,0,0,.06); padding:1.2rem 1.4rem; margin-top:.9rem; }
+
+        /* ── Empty state ── */
+        .empty-pane {
+            display: flex; flex-direction: column; align-items: center;
+            justify-content: center; min-height: 360px; color: #9e9e9e; text-align: center;
+        }
+        .empty-pane i { font-size: 3.5rem; margin-bottom: 1rem; color: #e0d0ee; }
+        .empty-pane h5 { color: #4a4a6a; margin-bottom: 0.4rem; font-weight: 600; }
+
+        /* ── Botón guardar ── */
+        .save-bar {
+            padding: 1rem 1.2rem; border-top: 1px solid #f0f0f0;
+            display: flex; justify-content: flex-end; background: #fff;
+            border-radius: 0 0 14px 14px;
+        }
+        .btn-save {
+            background: #6B2D8B; color: #fff; border: none;
+            padding: 0.65rem 1.8rem; border-radius: 25px;
+            font-family: 'Outfit', sans-serif; font-size: 0.9rem; font-weight: 600;
+            cursor: pointer; transition: background 0.2s; display: inline-flex; align-items: center; gap: 8px;
+        }
+        .btn-save:hover { background: #4a1f61; }
+        .btn-save:disabled { background: #c0a0d0; cursor: not-allowed; }
+
+        /* ── Loader ── */
+        .perm-loader {
+            display: none; align-items: center; justify-content: center;
+            flex-direction: column; min-height: 300px; gap: 16px;
+        }
+        .perm-loader.show { display: flex; }
+        .spinner-ieeq {
+            width: 40px; height: 40px; border-radius: 50%;
+            border: 4px solid #f3e8f8; border-top-color: #6B2D8B;
+            animation: spin 0.8s linear infinite;
+        }
+        \@keyframes spin { to { transform: rotate(360deg); } }
+
+        \@media (max-width: 991px) {
+            #content { margin-left: 0 !important; }
         }
     </style>
 </head>
 <body>
+HTML
 
-    <!-- Sidebar -->
-    <nav id="sidebar">
-        <div class="sidebar-header">
-            <h3>IEEQ</h3><p>Sistema de Registro</p>
-        </div>
-        <ul class="nav nav-pills flex-column mt-3 mb-auto">
-            <li class="nav-item">
-                <a href="dashboard.pl" class="nav-link"><i class="bi bi-house-door me-2"></i>Inicio</a>
-            </li>
-            <li class="nav-item">
-                <a href="gestion_usuarios.pl" class="nav-link"><i class="bi bi-people me-2"></i>Gestión de Usuarios</a>
-            </li>
-            <li class="nav-item">
-                <a href="gestion_permisos.pl" class="nav-link active"><i class="bi bi-shield-lock me-2"></i>Gestión de Permisos</a>
-            </li>
-            <li class="nav-item">
-                <a href="auditoria.pl" class="nav-link"><i class="bi bi-journal-text me-2"></i>Auditoría</a>
-            </li>
-        </ul>
-        <div class="user-section">
-            <div class="d-flex align-items-center mb-3">
-                <div class="flex-shrink-0">
-                    <div class="bg-white text-purple rounded-circle d-flex align-items-center justify-content-center fw-bold" style="width: 40px; height: 40px; color: #6B2D8B;">
-                        <i class="bi bi-person-fill fs-5"></i>
-                    </div>
-                </div>
-                <div class="flex-grow-1 ms-3" style="min-width: 0;">
-                    <div class="user-name">$nombre_completo</div>
-                    <div class="user-role">$rol</div>
-                </div>
-            </div>
-            <a href="dashboard.pl?logout=1" class="btn btn-outline-light btn-sm w-100 d-flex justify-content-center align-items-center">
-                <i class="bi bi-box-arrow-right me-2"></i>Cerrar Sesión
-            </a>
-        </div>
-    </nav>
+# --- Sidebar compartido ---
+require "$FindBin::Bin/_sidebar_admin.pl";
 
+print <<"HTML";
     <!-- Main Content -->
     <div id="content">
-        <div class="top-header">
+
+        <!-- Page Header -->
+        <div class="page-header">
             <div>
-                <h4 class="mb-0 text-dark fw-bold">Gestión de Permisos</h4>
-                <p class="text-muted mb-0 small">Configure los niveles de acceso para cada usuario del sistema</p>
+                <h4><i class="bi bi-shield-lock me-2" style="color:#6B2D8B;"></i>Gestión de Permisos</h4>
+                <p>Configura los niveles de acceso de cada usuario a los módulos del sistema.</p>
             </div>
-            <div class="text-muted d-none d-md-block">
+            <div class="text-muted d-none d-md-block small">
                 Instituto Electoral del Estado de Querétaro
             </div>
         </div>
 
-        <div class="row">
-            <!-- Left Column: User Selection -->
-            <div class="col-lg-4 mb-4">
-                <div class="card card-ieeq mb-4">
-                    <div class="card-body p-4">
-                        <h6 class="fw-bold mb-3">Seleccionar Usuario</h6>
-                        <div class="position-relative">
-                            <div class="input-group">
-                                <span class="input-group-text bg-white border-end-0" style="border: 1px solid #6B2D8B; border-radius: 20px 0 0 20px;">
-                                    <i class="bi bi-search" style="color: #6B2D8B;"></i>
-                                </span>
-                                <input type="text" class="form-control border-start-0" id="searchUsuario" placeholder="Buscar usuario por nombre o correo..." style="border: 1px solid #6B2D8B; border-radius: 0 20px 20px 0; padding: 0.6rem 1.2rem;" autocomplete="off">
+        <div class="row g-3">
+
+            <!-- ── Columna izquierda: selector ── -->
+            <div class="col-lg-4">
+                <div class="card-ieeq p-4">
+                    <h6 class="fw-bold mb-3" style="color:#1a1a2e;">Seleccionar usuario a configurar</h6>
+
+                    <!-- Trigger / selector combinado -->
+                    <div class="selector-wrap" id="selectorWrap">
+
+                        <!-- Trigger visible -->
+                        <div class="selector-trigger" id="selectorTrigger" onclick="toggleSelector()">
+                            <div class="trig-avatar" id="trigAvatar" style="background:#d0c0e0;">
+                                <i class="bi bi-person" style="font-size:1rem;color:#6B2D8B;"></i>
                             </div>
-                            
-                            <input type="hidden" id="selectUsuario" value="">
-                            
-                            <!-- Resultados de Búsqueda -->
-                            <div id="searchResultsList" class="position-absolute w-100 bg-white border rounded shadow-lg d-none" style="z-index: 1050; max-height: 280px; overflow-y: auto; top: 100%; margin-top: 5px;">
+                            <div style="flex:1; min-width:0;">
+                                <div id="trigName" class="trig-placeholder">Seleccionar usuario...</div>
+                                <div id="trigSub"  class="trig-sub" style="display:none;"></div>
                             </div>
+                            <i class="bi bi-chevron-down trig-chevron" id="trigChevron"></i>
                         </div>
-                        
-                        <!-- Contenedor oculto con los datos en formato JSON -->
-                        <div id="usersData" data-json="$usuarios_json_escaped" class="d-none"></div>
-                        
-                        <div id="userInfoPanel" class="mt-4 text-center d-none">
-                            <div class="d-flex justify-content-center">
-                                <div class="avatar-circle" id="userAvatar">U</div>
+
+                        <!-- Panel dropdown -->
+                        <div class="selector-panel" id="selectorPanel">
+                            <!-- Buscador -->
+                            <div class="sel-search-wrap" style="position:relative;">
+                                <i class="bi bi-search sel-search-icon"></i>
+                                <input
+                                    type="text"
+                                    id="selSearchInput"
+                                    class="sel-search"
+                                    placeholder="Buscar por nombre o correo..."
+                                    autocomplete="off"
+                                >
                             </div>
-                            <h5 class="fw-bold mb-1" id="userFullName">Nombre del Usuario</h5>
-                            <p class="text-muted mb-2 small" id="userEmail">correo\@ieeq.mx</p>
-                            <span class="badge bg-purple" style="background-color: #6B2D8B;" id="userRoleBadge">Rol</span>
+                            <!-- Lista -->
+                            <div class="sel-list" id="selList"></div>
                         </div>
                     </div>
                 </div>
 
-                <div class="card card-ieeq">
-                    <div class="card-body p-4">
-                        <h6 class="fw-bold mb-4">Niveles de Permiso</h6>
-                        
-                        <div class="level-item">
-                            <div class="level-icon write"><i class="bi bi-unlock-fill"></i></div>
-                            <div>
-                                <div class="fw-bold small">ESCRITURA</div>
-                                <div class="text-muted small">Lectura y modificación</div>
-                            </div>
+                <!-- Leyenda de niveles -->
+                <div class="nivel-card">
+                    <h6 class="fw-bold mb-3" style="color:#1a1a2e; font-size:.85rem;">Niveles de Acceso</h6>
+                    <div class="d-flex flex-column gap-2">
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="perm-pill active-write" style="cursor:default; pointer-events:none;">Escritura</span>
+                            <small class="text-muted">Lectura y modificación completa</small>
                         </div>
-                        
-                        <div class="level-item">
-                            <div class="level-icon read"><i class="bi bi-lock-fill"></i></div>
-                            <div>
-                                <div class="fw-bold small">LECTURA</div>
-                                <div class="text-muted small">Solo consulta</div>
-                            </div>
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="perm-pill active-read" style="cursor:default; pointer-events:none;">Lectura</span>
+                            <small class="text-muted">Solo consulta, sin editar</small>
                         </div>
-                        
-                        <div class="level-item mb-0">
-                            <div class="level-icon none"><i class="bi bi-slash-circle"></i></div>
-                            <div>
-                                <div class="fw-bold small">NINGUNO</div>
-                                <div class="text-muted small">Sin acceso</div>
-                            </div>
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="perm-pill active-none" style="cursor:default; pointer-events:none;">Sin acceso</span>
+                            <small class="text-muted">Módulo oculto para el usuario</small>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Right Column: Permission Matrix -->
+            <!-- ── Columna derecha: tabla de permisos ── -->
             <div class="col-lg-8">
-                <div class="card card-ieeq position-relative h-100" style="min-height: 500px;">
-                    
-                    <!-- Empty State -->
-                    <div id="emptyState" class="empty-state">
-                        <div class="avatar-circle mb-3 mx-auto" style="width: 80px; height: 80px; background-color: #f3e8f8;"><i class="bi bi-lock-fill text-purple" style="color: #6B2D8B;"></i></div>
-                        <h5 class="fw-bold">Seleccione un usuario</h5>
-                        <p class="text-muted">Para configurar sus permisos de acceso al sistema</p>
+                <div class="card-ieeq" style="overflow:hidden;">
+
+                    <!-- Empty state -->
+                    <div id="emptyPane" class="empty-pane">
+                        <i class="bi bi-shield-lock"></i>
+                        <h5>Seleccione un usuario</h5>
+                        <p class="small text-muted mb-0">Para configurar sus permisos de acceso al sistema</p>
                     </div>
 
                     <!-- Loader -->
-                    <div id="loaderOverlay" class="loader-overlay">
-                        <div class="spinner-border" style="color: #6B2D8B; width: 3rem; height: 3rem;" role="status"></div>
-                        <div class="mt-3 fw-semibold text-muted">Cargando permisos...</div>
+                    <div id="permLoader" class="perm-loader">
+                        <div class="spinner-ieeq"></div>
+                        <span class="small text-muted fw-semibold">Cargando permisos...</span>
                     </div>
 
-                    <!-- Permissions Matrix -->
-                    <div id="permissionsPanel" class="d-none d-flex flex-column h-100">
-                        <div class="card-body p-0 flex-grow-1">
-                            <div class="table-responsive">
-                                <table class="table table-permissions mb-0">
-                                    <thead class="table-light">
-                                        <tr>
-                                            <th class="ps-4 py-3" style="width: 50%;">Opción del Sistema</th>
-                                            <th class="text-center py-3">Lectura</th>
-                                            <th class="text-center py-3">Escritura</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="permissionsTbody">
-                                        
-                                        <!-- ADMINISTRACIÓN -->
-                                        <tr class="section-row"><td colspan="3" class="ps-4 py-2"><i class="bi bi-gear-fill me-2"></i>Administración</td></tr>
-                                        <tr data-id="6">
-                                            <td class="ps-5">Gestión de Usuarios</td>
-                                            <td class="text-center"><div class="form-check form-switch d-flex justify-content-center"><input class="form-check-input perm-read" type="checkbox" role="switch"></div></td>
-                                            <td class="text-center"><div class="form-check form-switch d-flex justify-content-center"><input class="form-check-input perm-write" type="checkbox" role="switch"></div></td>
-                                        </tr>
-                                        <tr data-id="7">
-                                            <td class="ps-5">Gestión de Permisos</td>
-                                            <td class="text-center"><div class="form-check form-switch d-flex justify-content-center"><input class="form-check-input perm-read" type="checkbox" role="switch"></div></td>
-                                            <td class="text-center"><div class="form-check form-switch d-flex justify-content-center"><input class="form-check-input perm-write" type="checkbox" role="switch"></div></td>
-                                        </tr>
-                                        <tr data-id="8">
-                                            <td class="ps-5">Auditoría</td>
-                                            <td class="text-center"><div class="form-check form-switch d-flex justify-content-center"><input class="form-check-input perm-read" type="checkbox" role="switch"></div></td>
-                                            <td class="text-center"><div class="form-check form-switch d-flex justify-content-center"><input class="form-check-input perm-write" type="checkbox" role="switch"></div></td>
-                                        </tr>
-                                        
-                                        <!-- FUNCIONARIOS -->
-                                        <tr class="section-row"><td colspan="3" class="ps-4 py-2"><i class="bi bi-person-badge-fill me-2"></i>Funcionarios</td></tr>
-                                        <tr data-id="9">
-                                            <td class="ps-5">Verificación de Afiliación</td>
-                                            <td class="text-center"><div class="form-check form-switch d-flex justify-content-center"><input class="form-check-input perm-read" type="checkbox" role="switch"></div></td>
-                                            <td class="text-center"><div class="form-check form-switch d-flex justify-content-center"><input class="form-check-input perm-write" type="checkbox" role="switch"></div></td>
-                                        </tr>
-                                        <tr data-id="10">
-                                            <td class="ps-5">Verificación de Auxiliares</td>
-                                            <td class="text-center"><div class="form-check form-switch d-flex justify-content-center"><input class="form-check-input perm-read" type="checkbox" role="switch"></div></td>
-                                            <td class="text-center"><div class="form-check form-switch d-flex justify-content-center"><input class="form-check-input perm-write" type="checkbox" role="switch"></div></td>
-                                        </tr>
-                                        <tr data-id="11">
-                                            <td class="ps-5">Consulta de Registros</td>
-                                            <td class="text-center"><div class="form-check form-switch d-flex justify-content-center"><input class="form-check-input perm-read" type="checkbox" role="switch"></div></td>
-                                            <td class="text-center"><div class="form-check form-switch d-flex justify-content-center"><input class="form-check-input perm-write" type="checkbox" role="switch"></div></td>
-                                        </tr>
-                                        <tr data-id="12">
-                                            <td class="ps-5">Reportes</td>
-                                            <td class="text-center"><div class="form-check form-switch d-flex justify-content-center"><input class="form-check-input perm-read" type="checkbox" role="switch"></div></td>
-                                            <td class="text-center"><div class="form-check form-switch d-flex justify-content-center"><input class="form-check-input perm-write" type="checkbox" role="switch"></div></td>
-                                        </tr>
+                    <!-- Panel de permisos -->
+                    <div id="permPanel" style="display:none;">
 
-                                        <!-- ORGANIZACIÓN -->
-                                        <tr class="section-row"><td colspan="3" class="ps-4 py-2"><i class="bi bi-building me-2"></i>Organización</td></tr>
-                                        <tr data-id="13">
-                                            <td class="ps-5">Registro de Afiliados</td>
-                                            <td class="text-center"><div class="form-check form-switch d-flex justify-content-center"><input class="form-check-input perm-read" type="checkbox" role="switch"></div></td>
-                                            <td class="text-center"><div class="form-check form-switch d-flex justify-content-center"><input class="form-check-input perm-write" type="checkbox" role="switch"></div></td>
-                                        </tr>
-                                        <tr data-id="14">
-                                            <td class="ps-5">Registro de Auxiliares</td>
-                                            <td class="text-center"><div class="form-check form-switch d-flex justify-content-center"><input class="form-check-input perm-read" type="checkbox" role="switch"></div></td>
-                                            <td class="text-center"><div class="form-check form-switch d-flex justify-content-center"><input class="form-check-input perm-write" type="checkbox" role="switch"></div></td>
-                                        </tr>
-                                        <tr data-id="15">
-                                            <td class="ps-5">Consulta de Registros</td>
-                                            <td class="text-center"><div class="form-check form-switch d-flex justify-content-center"><input class="form-check-input perm-read" type="checkbox" role="switch"></div></td>
-                                            <td class="text-center"><div class="form-check form-switch d-flex justify-content-center"><input class="form-check-input perm-write" type="checkbox" role="switch"></div></td>
-                                        </tr>
-                                        
-                                    </tbody>
-                                </table>
+                        <!-- Bulk actions bar -->
+                        <div id="bulkBar" class="bulk-bar show">
+                            <div class="bulk-user-info">
+                                <div id="bulkAvatar" class="bulk-av"></div>
+                                <div>
+                                    <div id="bulkName"  class="bulk-name"></div>
+                                    <div id="bulkEmail" class="bulk-email"></div>
+                                </div>
                             </div>
+                            <span class="small fw-semibold text-muted me-1">Aplicar a todos:</span>
+                            <button class="btn-bulk btn-bulk-write" onclick="applyBulk('write')">
+                                <i class="bi bi-pencil-fill me-1"></i>Escritura
+                            </button>
+                            <button class="btn-bulk btn-bulk-read" onclick="applyBulk('read')">
+                                <i class="bi bi-eye-fill me-1"></i>Lectura
+                            </button>
+                            <button class="btn-bulk btn-bulk-none" onclick="applyBulk('none')">
+                                <i class="bi bi-slash-circle me-1"></i>Sin acceso
+                            </button>
                         </div>
-                        <div class="card-footer bg-white border-top p-4 d-flex justify-content-end">
-                            <button class="btn btn-ieeq rounded-pill px-4" id="btnGuardar">
-                                <i class="bi bi-save me-2"></i>Guardar Permisos
+
+                        <!-- Tabla -->
+                        <div class="table-responsive">
+                            <table class="perm-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width:55%">MÓDULO</th>
+                                        <th>NIVEL DE ACCESO</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="permTableBody">
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Botón guardar -->
+                        <div class="save-bar">
+                            <button id="btnGuardarPermisos" class="btn-save" disabled>
+                                <i class="bi bi-floppy-fill"></i>Guardar Permisos
                             </button>
                         </div>
                     </div>
@@ -437,275 +558,281 @@ print <<"HTML";
             </div>
         </div>
     </div>
+HTML
 
-    <!-- Bootstrap JS -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap\@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+# Inyectar JSON fuera del heredoc para evitar interpolación de @ en correos
+print '    <!-- Datos de usuarios -->' . "\n";
+print '    <script>' . "\n";
+print '    var ALL_USERS = ' . $usuarios_json . ";\n";
+print '    </script>' . "\n\n";
+
+print <<'ENDHTML';
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const selectUsuario = document.getElementById('selectUsuario');
-            const searchUsuario = document.getElementById('searchUsuario');
-            const searchResultsList = document.getElementById('searchResultsList');
-            const emptyState = document.getElementById('emptyState');
-            const permissionsPanel = document.getElementById('permissionsPanel');
-            const loaderOverlay = document.getElementById('loaderOverlay');
-            const userInfoPanel = document.getElementById('userInfoPanel');
-            const btnGuardar = document.getElementById('btnGuardar');
-            
-            const usersDataEl = document.getElementById('usersData');
-            const allUsers = JSON.parse(usersDataEl ? usersDataEl.getAttribute('data-json') : '[]');
-            
-            // Lógica de Toggles (Cascada Escritura -> Lectura)
-            const rows = document.querySelectorAll('#permissionsTbody tr[data-id]');
-            rows.forEach(row => {
-                const readToggle = row.querySelector('.perm-read');
-                const writeToggle = row.querySelector('.perm-write');
-                
-                if(readToggle && writeToggle) {
-                    writeToggle.addEventListener('change', function() {
-                        if(this.checked) {
-                            readToggle.checked = true; // Escritura activa -> Lectura activa
-                        }
-                    });
-                    
-                    readToggle.addEventListener('change', function() {
-                        if(!this.checked) {
-                            writeToggle.checked = false; // Lectura inactiva -> Escritura inactiva
-                        }
-                    });
-                }
-            });
+    (function () {
+        'use strict';
 
-            // Renderizar resultados del buscador
-            function renderResults(filteredUsers) {
-                searchResultsList.innerHTML = '';
-                if(filteredUsers.length === 0) {
-                    searchResultsList.innerHTML = '<div class="p-3 text-center text-muted small">No se encontraron usuarios</div>';
-                    return;
-                }
-                
-                filteredUsers.forEach(user => {
-                    const nombre = user.nombre_completo;
-                    const words = nombre.split(' ').filter(w => w.length > 0);
-                    let initials = words.length > 0 ? words[0].charAt(0).toUpperCase() : 'U';
-                    if(words.length > 1) { initials += words[1].charAt(0).toUpperCase(); }
-                    
-                    let badgeClass = 'bg-secondary text-white';
-                    let roleDisplay = 'ORGANIZACIÓN';
-                    if (user.rol === 'administrador') {
-                        badgeClass = '';
-                        roleDisplay = 'ADMINISTRADOR';
-                    } else if (user.rol === 'funcionario') {
-                        badgeClass = 'bg-info text-dark';
-                        roleDisplay = 'FUNCIONARIO';
-                    }
-                    
-                    const badgeStyle = user.rol === 'administrador' ? 'background-color: #6B2D8B;' : '';
-                    
-                    const item = document.createElement('div');
-                    item.className = 'user-search-item d-flex align-items-center';
-                    item.innerHTML = 
-                        '<div class="avatar-initials-small fw-bold me-3">' + initials + '</div>' +
-                        '<div class="flex-grow-1" style="min-width: 0;">' +
-                            '<div class="fw-bold text-dark text-truncate" style="font-size: 0.9rem;">' + nombre + '</div>' +
-                            '<div class="text-muted text-truncate" style="font-size: 0.75rem;">' + (user.correo_electronico || '') + '</div>' +
-                        '</div>' +
-                        '<span class="badge rounded-pill ' + badgeClass + ' ms-2" style="' + badgeStyle + ' font-size: 0.65rem;">' + roleDisplay + '</span>';
-                    
-                    item.addEventListener('click', function() {
-                        searchUsuario.value = nombre;
-                        selectUsuario.value = user.id_usuario;
-                        searchResultsList.classList.add('d-none');
-                        // Disparar evento change para cargar los permisos
-                        selectUsuario.dispatchEvent(new Event('change'));
-                    });
-                    
-                    searchResultsList.appendChild(item);
-                });
+
+        /* ── Helpers ───────────────────────────────────────────────── */
+        var COLORS = ['#7c3aed','#2563eb','#059669','#db2777','#0dcaf0','#6f42c1','#d97706'];
+        function avatarColor(name) {
+            var s = 0;
+            for (var i = 0; i < (name||'').length; i++) s += name.charCodeAt(i);
+            return COLORS[s % COLORS.length];
+        }
+        function initials(name) {
+            var parts = (name||'').trim().split(/\s+/).filter(Boolean);
+            var ini = parts.length > 0 ? parts[0].charAt(0).toUpperCase() : '?';
+            if (parts.length > 1) ini += parts[1].charAt(0).toUpperCase();
+            return ini;
+        }
+        function tipoBadge(tipo) {
+            var map = {
+                'ADMINISTRADOR':    { label: 'Administrador',    bg: '#ede7f6', color: '#6B2D8B' },
+                'FUNCIONARIO_IEEQ': { label: 'Funcionario IEEQ', bg: '#e3f2fd', color: '#1565c0' },
+                'AUXILIAR':         { label: 'Auxiliar',          bg: '#e8f5e9', color: '#2e7d32' }
+            };
+            return map[tipo] || { label: tipo||'', bg: '#eee', color: '#555' };
+        }
+
+        /* ── Referencias DOM ──────────────────────────────────────── */
+        var selectorTrigger = document.getElementById('selectorTrigger');
+        var selectorPanel   = document.getElementById('selectorPanel');
+        var selSearchInput  = document.getElementById('selSearchInput');
+        var selList         = document.getElementById('selList');
+        var trigAvatar      = document.getElementById('trigAvatar');
+        var trigName        = document.getElementById('trigName');
+        var trigSub         = document.getElementById('trigSub');
+        var emptyPane       = document.getElementById('emptyPane');
+        var permLoader      = document.getElementById('permLoader');
+        var permPanel       = document.getElementById('permPanel');
+        var permTableBody   = document.getElementById('permTableBody');
+        var btnGuardar      = document.getElementById('btnGuardarPermisos');
+        var selectedUserId  = '';
+
+        /* ── Render lista en el panel ─────────────────────────────── */
+        function renderList(filtered) {
+            selList.innerHTML = '';
+            if (!filtered || filtered.length === 0) {
+                selList.innerHTML = '<div class="sel-empty">Sin resultados</div>';
+                return;
             }
-            
-            // Eventos del Input de Búsqueda
-            searchUsuario.addEventListener('input', function() {
-                const query = this.value.toLowerCase().trim();
-                if(query === '') {
-                    renderResults(allUsers);
-                    searchResultsList.classList.remove('d-none');
-                    return;
-                }
-                
-                const filtered = allUsers.filter(u => {
-                    const nombre = (u.nombre_completo || '').toLowerCase();
-                    const correo = (u.correo_electronico || '').toLowerCase();
-                    return nombre.includes(query) || correo.includes(query);
-                });
-                
-                renderResults(filtered);
-                searchResultsList.classList.remove('d-none');
-            });
-            
-            searchUsuario.addEventListener('focus', function() {
-                this.select();
-                const query = this.value.toLowerCase().trim();
-                const filtered = query === '' ? allUsers : allUsers.filter(u => {
-                    const nombre = (u.nombre_completo || '').toLowerCase();
-                    const correo = (u.correo_electronico || '').toLowerCase();
-                    return nombre.includes(query) || correo.includes(query);
-                });
-                renderResults(filtered);
-                searchResultsList.classList.remove('d-none');
-            });
-            
-            // Cerrar la lista al hacer clic fuera
-            document.addEventListener('click', function(e) {
-                if(!searchUsuario.contains(e.target) && !searchResultsList.contains(e.target)) {
-                    searchResultsList.classList.add('d-none');
-                }
-            });
+            filtered.forEach(function(u) {
+                var ini   = initials(u.nombre_completo);
+                var clr   = avatarColor(u.nombre_completo);
+                var badge = tipoBadge(u.tipo_usuario);
+                var isActive = selectedUserId && String(u.id_usuario) === String(selectedUserId);
 
-            // Seleccionar usuario y cargar permisos
-            selectUsuario.addEventListener('change', function() {
-                const userId = this.value;
-                if(!userId) return;
-                
-                // Actualizar Info del Usuario (Avatar y text)
-                const user = allUsers.find(u => u.id_usuario == userId);
-                if(!user) return;
-                const nombre = user.nombre_completo;
-                const rol = user.rol;
-                const correo = user.correo_electronico || '';
-                
-                document.getElementById('userFullName').innerText = nombre;
-                document.getElementById('userEmail').innerText = correo;
-                document.getElementById('userRoleBadge').innerText = rol.toUpperCase();
-                
-                // Generar Avatar Initials
-                const words = nombre.split(' ').filter(w => w.length > 0);
-                let initials = words.length > 0 ? words[0].charAt(0).toUpperCase() : 'U';
-                if(words.length > 1) { initials += words[1].charAt(0).toUpperCase(); }
-                document.getElementById('userAvatar').innerText = initials;
-                
-                userInfoPanel.classList.remove('d-none');
-                emptyState.classList.add('d-none');
-                permissionsPanel.classList.add('d-none');
-                loaderOverlay.style.display = 'flex';
-                
-                // Cargar Permisos via AJAX
-                const formData = new FormData();
-                formData.append('accion', 'get_permisos');
-                formData.append('id_usuario', userId);
-                
-                fetch('gestion_permisos.pl', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if(data.success) {
-                        // Limpiar todos los toggles
-                        document.querySelectorAll('.perm-read, .perm-write').forEach(el => el.checked = false);
-                        
-                        // Llenar con la respuesta
-                        const perms = data.permisos;
-                        for(const id_op in perms) {
-                            const row = document.querySelector(`tr[data-id="\${id_op}"]`);
-                            if(row) {
-                                const p = perms[id_op];
-                                row.querySelector('.perm-read').checked = (p.puede_ver === 1);
-                                row.querySelector('.perm-write').checked = (p.puede_editar === 1);
-                            }
-                        }
-                        
-                        loaderOverlay.style.display = 'none';
-                        permissionsPanel.classList.remove('d-none');
-                    } else {
-                        throw new Error(data.message || 'Error al cargar permisos');
-                    }
-                })
-                .catch(error => {
-                    loaderOverlay.style.display = 'none';
-                    emptyState.classList.remove('d-none');
-                    Swal.fire({
-                        icon: 'error',
-                        title: 'Oops...',
-                        text: error.message
-                    });
-                });
-            });
+                var el = document.createElement('div');
+                el.className = 'sel-option' + (isActive ? ' sel-active' : '');
+                el.innerHTML =
+                    '<div class="u-avatar" style="background:' + clr + ';">' + ini + '</div>' +
+                    '<div style="flex:1; min-width:0;">' +
+                        '<div class="u-name text-truncate">' + (u.nombre_completo||'') + '</div>' +
+                        '<div class="u-email text-truncate">@' + (u.correo_electronico||'').split('@')[0] + '</div>' +
+                    '</div>' +
+                    '<span class="badge rounded-pill" style="background:' + badge.bg + ';color:' + badge.color + ';font-size:.68rem;white-space:nowrap;">' + badge.label + '</span>';
 
-            // Guardar Permisos
-            btnGuardar.addEventListener('click', function() {
-                const userId = selectUsuario.value;
-                if(!userId) return;
-                
-                // Recopilar configuración de matriz
-                const newPerms = [];
-                const optionRows = document.querySelectorAll('#permissionsTbody tr[data-id]');
-                optionRows.forEach(row => {
-                    const idOp = row.getAttribute('data-id');
-                    const isRead = row.querySelector('.perm-read').checked ? 1 : 0;
-                    const isWrite = row.querySelector('.perm-write').checked ? 1 : 0;
-                    
-                    if(isRead || isWrite) {
-                        newPerms.push({
-                            id_opcion: idOp,
-                            puede_ver: isRead,
-                            puede_editar: isWrite
-                        });
-                    } else {
-                        // Even if it's 0, we should send it to update existing records to 0
-                        newPerms.push({
-                            id_opcion: idOp,
-                            puede_ver: 0,
-                            puede_editar: 0
-                        });
-                    }
+                el.addEventListener('click', function() {
+                    selectUser(u);
+                    closeSelector();
                 });
-                
-                // Mostrar loading en botón
-                const btnOriginalHTML = btnGuardar.innerHTML;
-                btnGuardar.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Guardando...';
-                btnGuardar.disabled = true;
-                
-                const formData = new FormData();
-                formData.append('accion', 'save_permisos');
-                formData.append('id_usuario', userId);
-                formData.append('permisos_json', JSON.stringify(newPerms));
-                
-                fetch('gestion_permisos.pl', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(response => response.json())
-                .then(data => {
-                    btnGuardar.innerHTML = btnOriginalHTML;
+                selList.appendChild(el);
+            });
+        }
+
+        /* ── Abrir / cerrar selector ──────────────────────────────── */
+        window.toggleSelector = function() {
+            var isOpen = selectorPanel.classList.contains('show');
+            if (isOpen) { closeSelector(); } else { openSelector(); }
+        };
+        function openSelector() {
+            selectorPanel.classList.add('show');
+            selectorTrigger.classList.add('open');
+            selSearchInput.value = '';
+            renderList(ALL_USERS);
+            setTimeout(function(){ selSearchInput.focus(); }, 60);
+        }
+        function closeSelector() {
+            selectorPanel.classList.remove('show');
+            selectorTrigger.classList.remove('open');
+        }
+
+        /* Cerrar al click fuera */
+        document.addEventListener('click', function(e) {
+            var wrap = document.getElementById('selectorWrap');
+            if (wrap && !wrap.contains(e.target)) closeSelector();
+        });
+
+        /* Buscador en tiempo real */
+        selSearchInput.addEventListener('input', function() {
+            var q = this.value.toLowerCase().trim();
+            var filtered = q === ''
+                ? ALL_USERS
+                : ALL_USERS.filter(function(u) {
+                    return (u.nombre_completo||'').toLowerCase().includes(q)
+                        || (u.correo_electronico||'').toLowerCase().includes(q);
+                });
+            renderList(filtered);
+        });
+
+        /* ── Seleccionar un usuario ───────────────────────────────── */
+        function selectUser(u) {
+            selectedUserId = u.id_usuario;
+
+            var ini   = initials(u.nombre_completo);
+            var clr   = avatarColor(u.nombre_completo);
+            var badge = tipoBadge(u.tipo_usuario);
+
+            // Actualizar trigger
+            trigAvatar.style.background = clr;
+            trigAvatar.innerHTML = '<span style="color:#fff;font-weight:700;font-size:.85rem;">' + ini + '</span>';
+            trigName.className   = 'trig-name';
+            trigName.textContent = u.nombre_completo;
+            trigSub.style.display = 'block';
+            trigSub.innerHTML = '@' + (u.correo_electronico||'').split('@')[0] +
+                ' &nbsp;<span class="badge rounded-pill" style="background:' + badge.bg + ';color:' + badge.color + ';font-size:.62rem;">' + badge.label + '</span>';
+
+            // Bulk bar
+            document.getElementById('bulkAvatar').textContent      = ini;
+            document.getElementById('bulkAvatar').style.background = clr;
+            document.getElementById('bulkName').textContent        = u.nombre_completo;
+            document.getElementById('bulkEmail').textContent       = u.correo_electronico || '';
+
+            loadPermisos(u.id_usuario);
+        }
+
+        /* ── Cargar permisos ──────────────────────────────────────── */
+        function loadPermisos(userId) {
+            emptyPane.style.display  = 'none';
+            permPanel.style.display  = 'none';
+            permLoader.classList.add('show');
+
+            var fd = new FormData();
+            fd.append('accion', 'get_permisos');
+            fd.append('id_usuario', userId);
+
+            fetch('gestion_permisos.pl', { method: 'POST', body: fd })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    permLoader.classList.remove('show');
+                    if (!data.success) throw new Error(data.message || 'Error');
+                    renderPermisos(data.modulos, data.permisos);
+                    permPanel.style.display = 'block';
                     btnGuardar.disabled = false;
-                    
-                    if(data.success) {
+                })
+                .catch(function(err) {
+                    permLoader.classList.remove('show');
+                    emptyPane.style.display = 'flex';
+                    Swal.fire({ icon: 'error', title: 'Error', text: err.message });
+                });
+        }
+
+        /* ── Render tabla de módulos ──────────────────────────────── */
+        var MOD_ICONS = [
+            'bi-people','bi-shield-lock','bi-building','bi-collection',
+            'bi-person-plus','bi-list-ul','bi-award','bi-journal-text','bi-patch-check'
+        ];
+        function renderPermisos(modulos, permisos) {
+            permTableBody.innerHTML = '';
+            (modulos || []).forEach(function(mod, idx) {
+                var perm  = permisos[mod.id_modulo] || { puede_ver: 0, puede_editar: 0 };
+                var nivel = 'none';
+                if (perm.puede_editar) nivel = 'write';
+                else if (perm.puede_ver) nivel = 'read';
+
+                var icon = MOD_ICONS[idx % MOD_ICONS.length];
+                var tr   = document.createElement('tr');
+                tr.setAttribute('data-id', mod.id_modulo);
+                tr.setAttribute('data-nivel', nivel);
+                tr.innerHTML =
+                    '<td>' +
+                        '<div class="d-flex align-items-center gap-2">' +
+                            '<span class="mod-icon"><i class="bi ' + icon + '"></i></span>' +
+                            '<span class="mod-name">' + mod.nombre_modulo + '</span>' +
+                        '</div>' +
+                    '</td>' +
+                    '<td>' +
+                        '<div class="perm-pills">' +
+                            '<button class="perm-pill pill-write ' + (nivel === 'write' ? 'active-write' : '') + '" onclick="setNivel(this,\'write\')">Escritura</button>' +
+                            '<button class="perm-pill pill-read  ' + (nivel === 'read'  ? 'active-read'  : '') + '" onclick="setNivel(this,\'read\')">Lectura</button>'  +
+                            '<button class="perm-pill pill-none  ' + (nivel === 'none'  ? 'active-none'  : '') + '" onclick="setNivel(this,\'none\')">Sin acceso</button>' +
+                        '</div>' +
+                    '</td>';
+                permTableBody.appendChild(tr);
+            });
+        }
+
+        /* ── Cambiar nivel ────────────────────────────────────────── */
+        window.setNivel = function(btn, nivel) {
+            var tr = btn.closest('tr');
+            tr.setAttribute('data-nivel', nivel);
+            tr.querySelectorAll('.perm-pill').forEach(function(p) {
+                p.classList.remove('active-write','active-read','active-none');
+            });
+            btn.classList.add('active-' + nivel);
+        };
+
+        /* ── Nivel masivo ─────────────────────────────────────────── */
+        window.applyBulk = function(nivel) {
+            document.querySelectorAll('#permTableBody tr[data-id]').forEach(function(tr) {
+                tr.setAttribute('data-nivel', nivel);
+                tr.querySelectorAll('.perm-pill').forEach(function(p) {
+                    p.classList.remove('active-write','active-read','active-none');
+                });
+                var pill = tr.querySelector('.pill-' + nivel);
+                if (pill) pill.classList.add('active-' + nivel);
+            });
+        };
+
+        /* ── Guardar permisos ─────────────────────────────────────── */
+        btnGuardar.addEventListener('click', function() {
+            if (!selectedUserId) return;
+
+            var perms = [];
+            document.querySelectorAll('#permTableBody tr[data-id]').forEach(function(tr) {
+                var id_mod = tr.getAttribute('data-id');
+                var nivel  = tr.getAttribute('data-nivel') || 'none';
+                perms.push({
+                    id_modulo:    id_mod,
+                    puede_ver:    (nivel === 'read' || nivel === 'write') ? 1 : 0,
+                    puede_editar: (nivel === 'write') ? 1 : 0
+                });
+            });
+
+            var origHTML = btnGuardar.innerHTML;
+            btnGuardar.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Guardando...';
+            btnGuardar.disabled  = true;
+
+            var fd = new FormData();
+            fd.append('accion', 'save_permisos');
+            fd.append('id_usuario', selectedUserId);
+            fd.append('permisos_json', JSON.stringify(perms));
+
+            fetch('gestion_permisos.pl', { method: 'POST', body: fd })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    btnGuardar.innerHTML = origHTML;
+                    btnGuardar.disabled  = false;
+                    if (data.success) {
                         Swal.fire({
-                            toast: true,
-                            position: 'top-end',
-                            icon: 'success',
-                            title: 'Permisos actualizados con éxito',
-                            showConfirmButton: false,
-                            timer: 3000,
-                            timerProgressBar: true
+                            toast: true, position: 'top-end', icon: 'success',
+                            title: '¡Permisos actualizados!',
+                            showConfirmButton: false, timer: 3000, timerProgressBar: true
                         });
                     } else {
                         throw new Error(data.message || 'Error al guardar');
                     }
                 })
-                .catch(error => {
-                    btnGuardar.innerHTML = btnOriginalHTML;
-                    btnGuardar.disabled = false;
-                    
-                    Swal.fire({
-                        icon: 'error',
-                        title: 'Error',
-                        text: error.message
-                    });
+                .catch(function (err) {
+                    btnGuardar.innerHTML = origHTML;
+                    btnGuardar.disabled  = false;
+                    Swal.fire({ icon: 'error', title: 'Error', text: err.message });
                 });
-            });
         });
+
+    })();
     </script>
 </body>
 </html>
-HTML
+ENDHTML

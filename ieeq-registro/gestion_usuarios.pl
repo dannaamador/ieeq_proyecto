@@ -1,6 +1,7 @@
 #!C:\xampp\perl\bin\perl.exe
 use strict;
 use warnings;
+use utf8;
 use CGI;
 use CGI::Session;
 use FindBin;
@@ -8,6 +9,10 @@ require "$FindBin::Bin/db.pl";
 use Digest::SHA qw(sha256_hex);
 
 my $cgi = CGI->new;
+
+# Configurar salida UTF-8
+binmode(STDOUT, ":utf8");
+
 my $session = CGI::Session->new(undef, $cgi, {Directory=>"$FindBin::Bin/.sesiones"});
 
 if (!$session->param('id_usuario')) {
@@ -21,152 +26,225 @@ if ($rol_actual ne 'administrador') {
     exit;
 }
 
-my $nombre_completo = $session->param('nombre_completo');
-
 # Manejo de acciones (POST)
-my $mensaje = '';
-my $tipo_mensaje = '';
-
 if ($cgi->request_method() eq 'POST') {
-    my $accion = $cgi->param('accion');
+    my $accion = $cgi->param('accion') || '';
     
     if ($accion eq 'crear') {
-        my $username = $cgi->param('username');
-        my $nombre = $cgi->param('nombre_completo');
-        my $password = $cgi->param('password');
-        my $rol = $cgi->param('rol');
-        my $activo = $cgi->param('activo') ? 1 : 0;
+        my $nombre = $cgi->param('nombre') || '';
+        my $apellido_paterno = $cgi->param('apellido_paterno') || '';
+        my $apellido_materno = $cgi->param('apellido_materno') || '';
         my $correo = $cgi->param('correo_electronico') || '';
+        my $password = $cgi->param('password') || '';
+        my $tipo_usuario = $cgi->param('tipo_usuario') || '';
+        my $activo = $cgi->param('activo') ? 1 : 0;
         
-        if ($username && $nombre && $password && $rol && $correo) {
+        # Limpieza de espacios
+        $nombre =~ s/^\s+|\s+$//g;
+        $apellido_paterno =~ s/^\s+|\s+$//g;
+        $apellido_materno =~ s/^\s+|\s+$//g;
+        $correo =~ s/^\s+|\s+$//g;
+        $tipo_usuario =~ s/^\s+|\s+$//g;
+        
+        if ($nombre && $apellido_paterno && $correo && $password && $tipo_usuario) {
+            # Verificar duplicado de correo
+            my @exists = execute_query_list("SELECT id_usuario FROM usuarios WHERE correo_electronico = ?", $correo);
+            if (@exists) {
+                print $cgi->header(-type => 'application/json', -charset => 'utf-8');
+                print '{"success":false,"message":"El correo electrónico ya se encuentra registrado."}';
+                exit;
+            }
+            
+            # Autogenerar username como prefijo de correo electrónico
+            my ($username) = split /@/, $correo;
+            
             my $hash = sha256_hex($password);
-            my $sql = "INSERT INTO usuarios (username, contrasena, nombre_completo, rol, activo, correo_electronico) VALUES (?, ?, ?, ?, ?, ?)";
-            if (execute_query_write($sql, $username, $hash, $nombre, $rol, $activo, $correo)) {
-                $mensaje = "Usuario creado exitosamente.";
-                $tipo_mensaje = "success";
+            my $sql = "INSERT INTO usuarios (correo_electronico, contrasena, nombre, apellido_paterno, apellido_materno, tipo_usuario, activo) VALUES (?, ?, ?, ?, ?, ?, ?)";
+            
+            if (execute_query_write($sql, $correo, $hash, $nombre, $apellido_paterno, $apellido_materno, $tipo_usuario, $activo)) {
+                print $cgi->header(-type => 'application/json', -charset => 'utf-8');
+                print '{"success":true,"message":"Usuario creado exitosamente."}';
+                exit;
             } else {
-                $mensaje = "Error al crear usuario. Verifica que el username o correo no esté duplicado.";
-                $tipo_mensaje = "danger";
+                print $cgi->header(-type => 'application/json', -charset => 'utf-8');
+                print '{"success":false,"message":"Error al registrar el usuario en la base de datos."}';
+                exit;
             }
         } else {
-            $mensaje = "Todos los campos (incluyendo correo) son requeridos.";
-            $tipo_mensaje = "danger";
+            print $cgi->header(-type => 'application/json', -charset => 'utf-8');
+            print '{"success":false,"message":"Por favor complete todos los campos obligatorios."}';
+            exit;
         }
     }
     elsif ($accion eq 'editar') {
-        my $id = $cgi->param('id_usuario');
-        my $username = $cgi->param('username');
-        my $nombre = $cgi->param('nombre_completo');
-        my $password = $cgi->param('password');
-        my $rol = $cgi->param('rol');
-        my $activo = $cgi->param('activo') ? 1 : 0;
+        my $id = $cgi->param('id_usuario') || '';
+        my $nombre = $cgi->param('nombre') || '';
+        my $apellido_paterno = $cgi->param('apellido_paterno') || '';
+        my $apellido_materno = $cgi->param('apellido_materno') || '';
         my $correo = $cgi->param('correo_electronico') || '';
+        my $password = $cgi->param('password') || '';
+        my $tipo_usuario = $cgi->param('tipo_usuario') || '';
+        my $activo = $cgi->param('activo') ? 1 : 0;
         
-        if ($id && $username && $nombre && $rol && $correo) {
+        $nombre =~ s/^\s+|\s+$//g;
+        $apellido_paterno =~ s/^\s+|\s+$//g;
+        $apellido_materno =~ s/^\s+|\s+$//g;
+        $correo =~ s/^\s+|\s+$//g;
+        $tipo_usuario =~ s/^\s+|\s+$//g;
+        
+        if ($id && $nombre && $apellido_paterno && $correo && $tipo_usuario) {
+            # Verificar duplicado de correo excluyendo al mismo usuario
+            my @exists = execute_query_list("SELECT id_usuario FROM usuarios WHERE correo_electronico = ? AND id_usuario != ?", $correo, $id);
+            if (@exists) {
+                print $cgi->header(-type => 'application/json', -charset => 'utf-8');
+                print '{"success":false,"message":"El correo electrónico ya está registrado por otro usuario."}';
+                exit;
+            }
+            
+            my ($username) = split /@/, $correo;
+            my $sql;
+            my @params;
+            
             if ($password) {
                 my $hash = sha256_hex($password);
-                my $sql = "UPDATE usuarios SET username=?, nombre_completo=?, rol=?, activo=?, contrasena=?, correo_electronico=? WHERE id_usuario=?";
-                if (execute_query_write($sql, $username, $nombre, $rol, $activo, $hash, $correo, $id)) {
-                    $mensaje = "Usuario actualizado exitosamente.";
-                    $tipo_mensaje = "success";
-                } else {
-                    $mensaje = "Error al actualizar. Verifica el username o correo.";
-                    $tipo_mensaje = "danger";
-                }
+                $sql = "UPDATE usuarios SET correo_electronico = ?, nombre = ?, apellido_paterno = ?, apellido_materno = ?, tipo_usuario = ?, activo = ?, contrasena = ? WHERE id_usuario = ?";
+                @params = ($correo, $nombre, $apellido_paterno, $apellido_materno, $tipo_usuario, $activo, $hash, $id);
             } else {
-                my $sql = "UPDATE usuarios SET username=?, nombre_completo=?, rol=?, activo=?, correo_electronico=? WHERE id_usuario=?";
-                if (execute_query_write($sql, $username, $nombre, $rol, $activo, $correo, $id)) {
-                    $mensaje = "Usuario actualizado exitosamente.";
-                    $tipo_mensaje = "success";
-                } else {
-                    $mensaje = "Error al actualizar. Verifica el username o correo.";
-                    $tipo_mensaje = "danger";
-                }
+                $sql = "UPDATE usuarios SET correo_electronico = ?, nombre = ?, apellido_paterno = ?, apellido_materno = ?, tipo_usuario = ?, activo = ? WHERE id_usuario = ?";
+                @params = ($correo, $nombre, $apellido_paterno, $apellido_materno, $tipo_usuario, $activo, $id);
+            }
+            
+            if (execute_query_write($sql, @params)) {
+                print $cgi->header(-type => 'application/json', -charset => 'utf-8');
+                print '{"success":true,"message":"Usuario actualizado exitosamente."}';
+                exit;
+            } else {
+                print $cgi->header(-type => 'application/json', -charset => 'utf-8');
+                print '{"success":false,"message":"Error al actualizar los datos en la base de datos."}';
+                exit;
             }
         } else {
-            $mensaje = "Todos los campos (incluyendo correo) son requeridos.";
-            $tipo_mensaje = "danger";
+            print $cgi->header(-type => 'application/json', -charset => 'utf-8');
+            print '{"success":false,"message":"Por favor complete todos los campos obligatorios."}';
+            exit;
         }
     }
     elsif ($accion eq 'toggle_activo') {
-        my $id = $cgi->param('id_usuario');
-        my $estado_actual = $cgi->param('estado_actual');
-        my $nuevo_estado = $estado_actual == 1 ? 0 : 1;
+        my $id = $cgi->param('id_usuario') || '';
+        my $activo = $cgi->param('activo') ? 1 : 0;
         
         if ($id) {
-            my $sql = "UPDATE usuarios SET activo=? WHERE id_usuario=?";
-            execute_query_write($sql, $nuevo_estado, $id);
-            $mensaje = "Estatus actualizado exitosamente.";
-            $tipo_mensaje = "success";
+            my $sql = "UPDATE usuarios SET activo = ? WHERE id_usuario = ?";
+            if (execute_query_write($sql, $activo, $id)) {
+                my @counts = execute_query_list("SELECT COUNT(*) AS total, SUM(activo) AS activos FROM usuarios");
+                my $total = $counts[0]->{total} || 0;
+                my $activos = $counts[0]->{activos} || 0;
+                
+                print $cgi->header(-type => 'application/json', -charset => 'utf-8');
+                print qq|{"success":true,"total":$total,"activos":$activos}|;
+                exit;
+            } else {
+                print $cgi->header(-type => 'application/json', -charset => 'utf-8');
+                print '{"success":false,"message":"Error al actualizar el estatus."}';
+                exit;
+            }
         }
     }
 }
 
-# Obtener lista de usuarios
-my @usuarios = execute_query_list("SELECT id_usuario, username, nombre_completo, rol, activo, correo_electronico FROM usuarios ORDER BY id_usuario DESC");
+# Obtener estadísticas reales
+my @counts_res = execute_query_list("SELECT COUNT(*) AS total, SUM(activo) AS activos FROM usuarios");
+my $total_usuarios = $counts_res[0]->{total} || 0;
+my $activos_usuarios = $counts_res[0]->{activos} || 0;
+
+# Obtener listado de usuarios de base de datos v3
+my @usuarios = execute_query_list("SELECT id_usuario, correo_electronico, nombre, apellido_paterno, apellido_materno, tipo_usuario, activo FROM usuarios ORDER BY id_usuario DESC");
 
 my $filas_html = '';
 for my $u (@usuarios) {
-    my $badge_class = $u->{activo} == 1 ? 'bg-success' : 'bg-danger';
-    my $estado_texto = $u->{activo} == 1 ? 'Activo' : 'Inactivo';
+    my $id = $u->{id_usuario};
+    my $activo = $u->{activo};
     
-    my $correo_esc = $u->{correo_electronico} || '';
-    $correo_esc =~ s/'/\\'/g;
-
-    my @words = split /\s+/, $u->{nombre_completo};
-    my $initials = uc(substr($words[0] || '', 0, 1));
-    $initials .= uc(substr($words[1], 0, 1)) if @words > 1;
-    my @colors = ('#6B2D8B', '#0d6efd', '#198754', '#dc3545', '#fd7e14', '#0dcaf0');
-    my $color = $colors[ length($u->{nombre_completo} || '') % 6 ];
+    # Clases y texto de estatus
+    my $status_class = $activo == 1 ? 'badge-active' : 'badge-inactive';
+    my $status_text = $activo == 1 ? 'Activo' : 'Inactivo';
     
-    my $avatar = <<"AVATAR";
-    <div class="d-flex align-items-center">
-        <div class="rounded-circle d-flex align-items-center justify-content-center text-white me-3 fw-bold shadow-sm flex-shrink-0" style="width: 40px; height: 40px; background-color: $color; font-size: 0.9rem;">
-            $initials
-        </div>
-        <div>$u->{nombre_completo}</div>
-    </div>
-AVATAR
-
-    my %colores_rol = (
-        'administrador' => 'bg-ieeq-purple',
-        'funcionario' => 'bg-primary',
-        'integrante_organizacion' => 'bg-success'
-    );
-    my $rol_badge_class = $colores_rol{$u->{rol}} || 'bg-dark';
-
+    # Nombre completo concatenado
+    my $nom_completo = $u->{nombre} . ' ' . $u->{apellido_paterno};
+    $nom_completo .= ' ' . $u->{apellido_materno} if $u->{apellido_materno};
+    
+    # Iniciales del avatar
+    my $initials = uc(substr($u->{nombre} || '', 0, 1)) . uc(substr($u->{apellido_paterno} || '', 0, 1));
+    $initials ||= 'U';
+    
+    # Colores elegantes de avatares
+    my @avatar_colors = ('#6B2D8B', '#d97706', '#0d9488', '#2563eb', '#ea580c', '#059669', '#db2777');
+    my $color = $avatar_colors[ $id % scalar(@avatar_colors) ];
+    
+    # Extraer nombre de usuario de correo
+    my ($username) = split /@/, $u->{correo_electronico};
+    
+    # Badge del tipo de usuario
+    my $tipo_badge_class = '';
+    my $tipo_text = '';
+    if ($u->{tipo_usuario} eq 'ADMINISTRADOR') {
+        $tipo_badge_class = 'badge-admin';
+        $tipo_text = 'Administrador';
+    } elsif ($u->{tipo_usuario} eq 'FUNCIONARIO_IEEQ') {
+        $tipo_badge_class = 'badge-funcionario';
+        $tipo_text = 'Funcionario IEEQ';
+    } else {
+        $tipo_badge_class = 'badge-auxiliar';
+        $tipo_text = 'Auxiliar';
+    }
+    
+    # Escapar campos de texto para uso en JS
+    my $esc_nombre = $u->{nombre} || '';
+    my $esc_paterno = $u->{apellido_paterno} || '';
+    my $esc_materno = $u->{apellido_materno} || '';
+    my $esc_correo = $u->{correo_electronico} || '';
+    $esc_nombre =~ s/'/\\'/g;
+    $esc_paterno =~ s/'/\\'/g;
+    $esc_materno =~ s/'/\\'/g;
+    $esc_correo =~ s/'/\\'/g;
+    
+    my $checked_attr = $activo == 1 ? 'checked' : '';
+    
     $filas_html .= <<"ROW";
-    <tr>
-        <td class="ps-4 fw-semibold text-secondary align-middle">$u->{id_usuario}</td>
-        <td class="align-middle">$avatar</td>
-        <td class="align-middle"><strong>$u->{username}</strong><br><small class="text-muted">$u->{correo_electronico}</small></td>
-        <td class="text-capitalize align-middle"><span class="badge $rol_badge_class px-2 py-1">$u->{rol}</span></td>
-        <td class="align-middle"><span class="badge $badge_class px-3 py-2 rounded-pill">$estado_texto</span></td>
+    <tr data-id="$id">
+        <td class="ps-4 fw-semibold text-secondary align-middle">#$id</td>
+        <td class="align-middle">
+            <div class="d-flex align-items-center">
+                <div class="rounded-circle d-flex align-items-center justify-content-center text-white me-3 fw-semibold shadow-sm flex-shrink-0" style="width: 40px; height: 40px; background-color: $color; font-size: 0.9rem;">
+                    $initials
+                </div>
+                <div class="fw-semibold text-dark">$nom_completo</div>
+            </div>
+        </td>
+        <td class="align-middle">
+            <div class="fw-semibold text-secondary" style="font-size: 0.9rem;">\@$username</div>
+            <div class="text-muted" style="font-size: 0.8rem;">$u->{correo_electronico}</div>
+        </td>
+        <td class="align-middle">
+            <span class="badge $tipo_badge_class px-3 py-2 rounded-pill" style="font-size: 0.825rem;">$tipo_text</span>
+        </td>
+        <td class="align-middle">
+            <span id="status-badge-$id" class="badge $status_class px-3 py-2 rounded-pill d-inline-flex align-items-center" style="font-size: 0.825rem;">
+                <span class="me-1">●</span> <span class="status-text">$status_text</span>
+            </span>
+        </td>
         <td class="pe-4 align-middle">
-            <button class="btn btn-sm btn-outline-primary me-1" onclick="abrirModalEditar($u->{id_usuario}, '$u->{username}', '$u->{nombre_completo}', '$correo_esc', '$u->{rol}', $u->{activo})">
-                <i class="bi bi-pencil"></i>
-            </button>
-            <form method="POST" style="display:inline;">
-                <input type="hidden" name="accion" value="toggle_activo">
-                <input type="hidden" name="id_usuario" value="$u->{id_usuario}">
-                <input type="hidden" name="estado_actual" value="$u->{activo}">
-                <button type="submit" class="btn btn-sm btn-outline-secondary" title="Cambiar Estatus">
-                    <i class="bi bi-arrow-repeat"></i>
+            <div class="d-flex align-items-center gap-3">
+                <button class="btn btn-edit-user p-1" onclick="abrirModalEditar($id, '$esc_nombre', '$esc_paterno', '$esc_materno', '$esc_correo', '$u->{tipo_usuario}', $activo)" title="Editar Usuario">
+                    <i class="bi bi-pencil" style="font-size: 1.1rem;"></i>
                 </button>
-            </form>
+                <div class="form-check form-switch mb-0">
+                    <input class="form-check-input" type="checkbox" role="switch" id="switch-$id" $checked_attr onchange="toggleUsuarioActivo($id, this)">
+                </div>
+            </div>
         </td>
     </tr>
 ROW
-}
-
-my $alerta_html = '';
-if ($mensaje) {
-    $alerta_html = <<"ALERT";
-    <div class="alert alert-$tipo_mensaje alert-dismissible fade show shadow-sm" role="alert">
-        $mensaje
-        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-    </div>
-ALERT
 }
 
 # Cabeceras anti-caché
@@ -187,90 +265,189 @@ print <<"HTML";
     <title>Gestión de Usuarios - IEEQ</title>
     <!-- Bootstrap 5 -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap\@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons\@1.11.1/font/bootstrap-icons.css">
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght\@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons\@1.11.3/font/bootstrap-icons.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght\@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2\@11"></script>
     <style>
         body { font-family: 'Outfit', sans-serif; background-color: #f4f6f9; overflow-x: hidden; }
-        #sidebar { width: 280px; height: 100vh; background-color: #6B2D8B; color: #ffffff; position: fixed; top: 0; left: 0; z-index: 1000; box-shadow: 4px 0 10px rgba(0,0,0,0.1); }
-        .sidebar-header { padding: 2rem 1.5rem; text-align: center; border-bottom: 1px solid rgba(255,255,255,0.1); }
-        .sidebar-header h3 { font-weight: 700; letter-spacing: 2px; margin-bottom: 5px; }
-        .nav-pills .nav-link { border-radius: 0; padding: 15px 20px; font-weight: 400; opacity: 0.85; transition: all 0.2s; color: white; }
-        .nav-pills .nav-link:hover { opacity: 1; background-color: rgba(255,255,255,0.1); border-left: 4px solid #ffffff; color: white; }
-        .nav-pills .nav-link.active { background-color: rgba(255,255,255,0.2); opacity: 1; border-left: 4px solid #ffffff; font-weight: 600; color: white; }
-        .user-section { position: absolute; bottom: 0; width: 100%; padding: 1.5rem; background-color: rgba(0,0,0,0.15); border-top: 1px solid rgba(255,255,255,0.1); }
-        .user-name { font-weight: 600; font-size: 0.9rem; }
-        .user-role { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; color: #d1a3e6; }
-        #content { margin-left: 280px; min-height: 100vh; padding: 2rem; }
-        .top-header { background: #ffffff; padding: 1rem 2rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.03); margin-bottom: 2rem; display: flex; justify-content: space-between; align-items: center; }
-        .btn-ieeq { background-color: #6B2D8B; color: white; transition: all 0.3s; }
-        .btn-ieeq:hover { background-color: #4a1f61; color: white; transform: translateY(-2px); box-shadow: 0 4px 10px rgba(107,45,139,0.3); }
-        .bg-ieeq-purple { background-color: #6B2D8B !important; color: white; }
-        .table-hover tbody tr:hover { background-color: #f8f9fa; }
         
-        /* Responsive Sidebar */
-        \@media (max-width: 768px) {
-            #sidebar { transform: translateX(-100%); transition: transform 0.3s ease-in-out; }
-            #sidebar.active { transform: translateX(0); }
-            #content { margin-left: 0; padding: 1rem; transition: margin-left 0.3s ease-in-out; }
-            .mobile-overlay { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); z-index: 999; }
-            .mobile-overlay.active { display: block; }
+        #content { padding: 2rem; }
+        
+        .top-header {
+            background: #fff;
+            padding: 1.25rem 2rem;
+            border-bottom: 1px solid #eef2f6;
+            margin-bottom: 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
-        \@media (min-width: 769px) {
-            #sidebar { transform: translateX(0); transition: transform 0.3s ease-in-out; }
-            #content { margin-left: 280px; transition: margin-left 0.3s ease-in-out; }
-            .mobile-overlay { display: none !important; }
+        
+        .text-purple {
+            color: #6B2D8B !important;
         }
-
-        /* DataTables Custom Styling */
-        .dataTables_wrapper { padding: 1.5rem; }
-        .dataTables_length select { border-radius: 8px; border: 1px solid #dee2e6; padding: 0.375rem 2.25rem 0.375rem 0.75rem; margin-left: 0.5rem; margin-right: 0.5rem; }
-        .dataTables_filter input { border-radius: 8px; border: 1px solid #dee2e6; padding: 0.375rem 0.75rem; margin-left: 0.5rem; }
-        .dataTables_filter input:focus, .dataTables_length select:focus { border-color: #6B2D8B; box-shadow: 0 0 0 0.25rem rgba(107,45,139,0.25); outline: none; }
-        .page-item.active .page-link { background-color: #6B2D8B !important; border-color: #6B2D8B !important; color: white !important; }
-        .page-link { color: #6B2D8B; }
-        .page-link:hover { color: #4a1f61; }
-        table.dataTable { margin-top: 0 !important; margin-bottom: 0 !important; }
-        .table > :not(caption) > * > * { padding: 1rem 0.5rem; }
+        
+        .btn-ieeq {
+            background-color: #6B2D8B;
+            color: white;
+            font-weight: 600;
+            padding: 0.6rem 1.5rem;
+            border-radius: 50px;
+            transition: all 0.3s;
+            border: none;
+        }
+        .btn-ieeq:hover {
+            background-color: #55246f;
+            color: white;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(107, 45, 139, 0.25);
+        }
+        
+        .counts-pill {
+            background-color: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 50px;
+            padding: 0.5rem 1.2rem;
+            font-size: 0.9rem;
+            display: inline-flex;
+            align-items: center;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+        }
+        
+        #usuariosTable thead tr {
+            background-color: #6B2D8B !important;
+            color: #ffffff !important;
+        }
+        #usuariosTable thead th {
+            border: none !important;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.8rem;
+            letter-spacing: 0.5px;
+            padding: 14px 16px;
+        }
+        #usuariosTable thead th:first-child {
+            border-top-left-radius: 12px;
+        }
+        #usuariosTable thead th:last-child {
+            border-top-right-radius: 12px;
+        }
+        
+        .table-hover tbody tr:hover {
+            background-color: #f9fafb;
+        }
+        
+        .table > :not(caption) > * > * {
+            padding: 1rem 1rem;
+            border-bottom: 1px solid #f3f4f6;
+        }
+        
+        .badge-admin {
+            background-color: #F3E8FF !important;
+            color: #6B2D8B !important;
+            font-weight: 600;
+        }
+        .badge-auxiliar {
+            background-color: #DBEAFE !important;
+            color: #2563EB !important;
+            font-weight: 600;
+        }
+        .badge-funcionario {
+            background-color: #D1FAE5 !important;
+            color: #059669 !important;
+            font-weight: 600;
+        }
+        .badge-active {
+            background-color: #D1FAE5 !important;
+            color: #059669 !important;
+            font-weight: 600;
+        }
+        .badge-inactive {
+            background-color: #FEE2E2 !important;
+            color: #EF4444 !important;
+            font-weight: 600;
+        }
+        
+        .btn-edit-user {
+            background: none;
+            border: none;
+            color: #9ca3af;
+            padding: 6px;
+            transition: all 0.2s;
+        }
+        .btn-edit-user:hover {
+            color: #6B2D8B;
+            transform: scale(1.15);
+        }
+        
+        .form-switch .form-check-input {
+            width: 2.8em;
+            height: 1.5em;
+            cursor: pointer;
+            border-color: #d1d5db;
+        }
+        .form-switch .form-check-input:checked {
+            background-color: #10B981;
+            border-color: #10B981;
+        }
+        .form-switch .form-check-input:focus {
+            box-shadow: 0 0 0 0.25rem rgba(16, 185, 129, 0.25);
+            border-color: #10B981;
+        }
+        
+        .search-container input {
+            height: 52px;
+            font-size: 0.95rem;
+            border: 1px solid #e5e7eb;
+            background-color: #ffffff;
+            transition: all 0.3s;
+        }
+        .search-container input:focus {
+            border-color: #6B2D8B;
+            box-shadow: 0 0 0 0.25rem rgba(107, 45, 139, 0.15);
+        }
+        
+        .modal-content {
+            border-radius: 16px;
+            border: none;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        .modal-header {
+            border-bottom: 1px solid #f3f4f6;
+            padding: 1.5rem 1.75rem;
+        }
+        .modal-body {
+            padding: 1.75rem;
+        }
+        .modal-footer {
+            border-top: 1px solid #f3f4f6;
+            padding: 1.25rem 1.75rem;
+        }
+        .form-control, .form-select {
+            border-radius: 10px;
+            padding: 10px 14px;
+            border: 1px solid #d1d5db;
+        }
+        .form-control:focus, .form-select:focus {
+            border-color: #6B2D8B;
+            box-shadow: 0 0 0 0.25rem rgba(107, 45, 139, 0.15);
+        }
+        
+        \@media (max-width: 991px) {
+            #content { padding: 1rem; }
+        }
     </style>
 </head>
 <body>
-    <div class="mobile-overlay"></div>
+HTML
 
-    <!-- Sidebar -->
-    <nav id="sidebar">
-        <div class="sidebar-header">
-            <h3>IEEQ</h3><p>Sistema de Registro</p>
-        </div>
-        <ul class="nav nav-pills flex-column mt-3 mb-auto">
-            <li class="nav-item">
-                <a href="dashboard.pl" class="nav-link"><i class="bi bi-house-door me-2"></i>Inicio</a>
-            </li>
-            <li class="nav-item">
-                <a href="gestion_usuarios.pl" class="nav-link active"><i class="bi bi-people me-2"></i>Gestión de Usuarios</a>
-            </li>
-            <li class="nav-item"><a href="gestion_permisos.pl" class="nav-link"><i class="bi bi-shield-lock me-2"></i>Gestión de Permisos</a></li>
-            <li class="nav-item"><a href="auditoria.pl" class="nav-link"><i class="bi bi-journal-text me-2"></i>Auditoría</a></li>
-        </ul>
-        <div class="user-section">
-            <div class="d-flex align-items-center mb-3">
-                <div class="flex-shrink-0">
-                    <div class="bg-white text-purple rounded-circle d-flex align-items-center justify-content-center fw-bold" style="width: 40px; height: 40px; color: #6B2D8B;">
-                        <i class="bi bi-person-fill fs-5"></i>
-                    </div>
-                </div>
-                <div class="flex-grow-1 ms-3">
-                    <div class="user-name">$nombre_completo</div>
-                    <div class="user-role">administrador</div>
-                </div>
-            </div>
-            <a href="dashboard.pl?logout=1" class="btn btn-outline-light btn-sm w-100 d-flex justify-content-center align-items-center">
-                <i class="bi bi-box-arrow-right me-2"></i>Cerrar Sesión
-            </a>
-        </div>
-    </nav>
+# Sidebar compartido de Administrador
+require "$FindBin::Bin/_sidebar_admin.pl";
 
-    <!-- Main Content -->
+print <<"HTML";
+    <!-- Contenido Principal -->
     <div id="content">
+        <!-- Cabecera de Página superior -->
         <div class="top-header">
             <div class="d-flex align-items-center">
                 <button class="btn btn-light d-md-none me-3 shadow-sm" id="sidebarToggle">
@@ -281,26 +458,46 @@ print <<"HTML";
             <div class="text-muted d-none d-md-block">Instituto Electoral del Estado de Querétaro</div>
         </div>
 
-        $alerta_html
-
-        <div class="card border-0 shadow-sm rounded-4">
-            <div class="card-header bg-white d-flex justify-content-between align-items-center p-4 border-0 border-bottom">
-                <h5 class="mb-0 fw-bold text-dark">Usuarios del Sistema</h5>
-                <button class="btn btn-ieeq rounded-pill px-4" data-bs-toggle="modal" data-bs-target="#modalCrear">
-                    <i class="bi bi-plus-lg me-2"></i>Nuevo Usuario
-                </button>
+        <!-- Encabezado de la Sección y Botón -->
+        <div class="d-flex justify-content-between align-items-start mb-2">
+            <div>
+                <h2 class="fw-bold text-dark mb-1">Gestión de Usuarios</h2>
+                <p class="text-muted mb-0">Administra los accesos al sistema IEEQ.</p>
             </div>
+            <button class="btn btn-ieeq px-4" onclick="abrirModalCrear()">
+                <i class="bi bi-plus-lg me-2"></i>Nuevo Usuario
+            </button>
+        </div>
+
+        <!-- Contador Real de Usuarios -->
+        <div class="d-flex align-items-center gap-2 mb-4" style="font-size: 0.95rem;">
+            <div class="counts-pill">
+                <i class="bi bi-person text-purple me-2"></i>
+                <span class="fw-semibold me-1" id="countTotal">$total_usuarios</span> usuarios registrados
+            </div>
+            <span class="text-muted">·</span>
+            <span class="text-muted"><span id="countActivos" class="fw-semibold text-dark">$activos_usuarios</span> activos</span>
+        </div>
+
+        <!-- Buscador general de la tabla -->
+        <div class="position-relative mb-4 search-container">
+            <i class="bi bi-search position-absolute top-50 start-0 translate-middle-y ms-4 text-muted" style="font-size: 1.15rem;"></i>
+            <input type="text" id="searchInput" class="form-control rounded-pill ps-5 border-0 shadow-sm" placeholder="Buscar por nombre, usuario o correo electrónico..." style="padding-left: 3.2rem !important;">
+        </div>
+
+        <!-- Card con Tabla de Usuarios -->
+        <div class="card border-0 shadow-sm rounded-4 overflow-hidden mb-5">
             <div class="card-body p-0">
-                <div class="table-responsive" style="overflow-x: hidden;">
-                    <table id="usuariosTable" class="table table-hover align-middle mb-0 w-100" style="font-size: 0.95rem;">
+                <div class="table-responsive">
+                    <table id="usuariosTable" class="table table-hover align-middle mb-0 w-100">
                         <thead>
-                            <tr class="bg-ieeq-purple text-white">
-                                <th class="ps-4 border-0 py-3 fw-semibold rounded-top-start" style="width: 5%;">ID</th>
-                                <th class="border-0 py-3 fw-semibold" style="width: 30%;">Nombre Completo</th>
-                                <th class="border-0 py-3 fw-semibold" style="width: 20%;">Username</th>
-                                <th class="border-0 py-3 fw-semibold" style="width: 15%;">Rol</th>
-                                <th class="border-0 py-3 fw-semibold" style="width: 15%;">Estatus</th>
-                                <th class="pe-4 border-0 py-3 fw-semibold rounded-top-end text-center" style="width: 15%;">Acciones</th>
+                            <tr>
+                                <th class="ps-4" style="width: 8%;">ID</th>
+                                <th style="width: 32%;">Nombre Completo</th>
+                                <th style="width: 25%;">Usuario / Correo</th>
+                                <th style="width: 15%;">Tipo de Usuario</th>
+                                <th style="width: 12%;">Estatus</th>
+                                <th class="pe-4" style="width: 8%;">Acciones</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -312,220 +509,314 @@ print <<"HTML";
         </div>
     </div>
 
-    <!-- Modal Crear -->
-    <div class="modal fade" id="modalCrear" tabindex="-1">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content border-0 shadow">
-                <div class="modal-header border-bottom-0 bg-light">
-                    <h5 class="modal-title fw-bold" style="color: #6B2D8B;">Crear Nuevo Usuario</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+    <!-- Modal Nuevo Usuario -->
+    <div class="modal fade" id="modalCrear" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold text-purple"><i class="bi bi-person-plus me-2"></i>Nuevo Usuario</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
-                <form method="POST" class="needs-validation" novalidate>
-                    <div class="modal-body p-4">
-                        <input type="hidden" name="accion" value="crear">
-                        
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <label class="form-label fw-semibold">Nombre Completo</label>
-                                <input type="text" class="form-control" name="nombre_completo" required placeholder="Ej. Juan Pérez">
-                                <div class="invalid-feedback">Ingresa el nombre completo.</div>
+                <form id="formCrear" class="needs-validation" novalidate onsubmit="event.preventDefault(); submitForm(this, 'modalCrear');">
+                    <input type="hidden" name="accion" value="crear">
+                    <div class="modal-body">
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label fw-semibold">Nombre(s) <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" name="nombre" placeholder="Ej. María" required>
+                                <div class="invalid-feedback">Por favor, ingrese el nombre.</div>
                             </div>
-                            <div class="col-md-6 mb-3">
-                                <label class="form-label fw-semibold">Username</label>
-                                <input type="text" class="form-control" name="username" required placeholder="Ej. juan.perez">
-                                <div class="invalid-feedback">Ingresa un nombre de usuario.</div>
+                            <div class="col-md-4">
+                                <label class="form-label fw-semibold">Apellido Paterno <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" name="apellido_paterno" placeholder="Ej. González" required>
+                                <div class="invalid-feedback">Por favor, ingrese el apellido paterno.</div>
                             </div>
-                        </div>
-                        <div class="row">
-                            <div class="col-md-12 mb-3">
-                                <label class="form-label fw-semibold">Correo Electrónico</label>
-                                <input type="email" class="form-control" name="correo_electronico" required placeholder="Ej. correo\@ieeq.mx">
-                                <div class="invalid-feedback">Ingresa un correo electrónico válido.</div>
+                            <div class="col-md-4">
+                                <label class="form-label fw-semibold">Apellido Materno</label>
+                                <input type="text" class="form-control" name="apellido_materno" placeholder="Ej. Pérez">
                             </div>
-                        </div>
-
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <label class="form-label fw-semibold">Contraseña</label>
-                                <input type="password" class="form-control pass-input" name="password" required onkeyup="checkStrength(this.value, 'crear')">
-                                <div class="invalid-feedback">Crea una contraseña.</div>
-                                <div class="progress mt-2" style="height: 5px;">
-                                    <div id="passStrength_crear" class="progress-bar bg-danger" role="progressbar" style="width: 0%"></div>
-                                </div>
-                                <small id="passText_crear" class="text-muted" style="font-size: 0.75rem;">Fortaleza de contraseña</small>
+                            
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">Correo Electrónico <span class="text-danger">*</span></label>
+                                <input type="email" class="form-control" name="correo_electronico" placeholder="Ej. correo\@asociacion.org" required>
+                                <div class="invalid-feedback">Por favor, ingrese un correo válido.</div>
                             </div>
-                            <div class="col-md-6 mb-3">
-                                <label class="form-label fw-semibold">Rol del Sistema</label>
-                                <select class="form-select" name="rol" required>
-                                    <option value="">Selecciona un tipo...</option>
-                                    <option value="administrador">Administrador del Sistema</option>
-                                    <option value="funcionario">Funcionario del IEEQ</option>
-                                    <option value="integrante_organizacion">Integrante de la Organización</option>
+                            
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">Tipo de Usuario <span class="text-danger">*</span></label>
+                                <select class="form-select" name="tipo_usuario" required>
+                                    <option value="" disabled selected>Seleccione...</option>
+                                    <option value="ADMINISTRADOR">Administrador</option>
+                                    <option value="FUNCIONARIO_IEEQ">Funcionario IEEQ</option>
+                                    <option value="AUXILIAR">Auxiliar</option>
                                 </select>
-                                <div class="invalid-feedback">Debes seleccionar un rol.</div>
+                                <div class="invalid-feedback">Por favor, seleccione un tipo de usuario.</div>
                             </div>
-                        </div>
-                        
-                        <div class="form-check form-switch p-3 bg-light rounded-3 mt-2">
-                            <input class="form-check-input ms-0 mt-1 me-2" type="checkbox" name="activo" id="checkActivoCrear" checked style="transform: scale(1.3);">
-                            <label class="form-check-label fw-semibold ms-2" for="checkActivoCrear">Habilitar cuenta inmediatamente</label>
+                            
+                            <div class="col-md-12">
+                                <label class="form-label fw-semibold">Contraseña <span class="text-danger">*</span></label>
+                                <input type="password" class="form-control" name="password" placeholder="Mínimo 8 caracteres" required minlength="8">
+                                <div class="invalid-feedback">La contraseña es requerida (mínimo 8 caracteres).</div>
+                            </div>
+                            
+                            <div class="col-md-12">
+                                <div class="form-check form-switch p-3 bg-light rounded-3 mt-2">
+                                    <input class="form-check-input ms-0 mt-1 me-2" type="checkbox" name="activo" value="1" id="checkActivoCrear" checked>
+                                    <label class="form-check-label fw-semibold ms-2" for="checkActivoCrear">Habilitar cuenta inmediatamente</label>
+                                </div>
+                            </div>
                         </div>
                     </div>
-                    <div class="modal-footer border-top-0 bg-light">
-                        <button type="button" class="btn btn-link text-secondary text-decoration-none" data-bs-dismiss="modal">Cancelar</button>
-                        <button type="submit" class="btn btn-ieeq rounded-pill px-4">Guardar Usuario</button>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-light rounded-pill px-4" data-bs-dismiss="modal">Cancelar</button>
+                        <button type="submit" class="btn btn-ieeq">Guardar Usuario</button>
                     </div>
                 </form>
             </div>
         </div>
     </div>
 
-    <!-- Modal Editar -->
-    <div class="modal fade" id="modalEditar" tabindex="-1">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content border-0 shadow">
-                <div class="modal-header border-bottom-0 bg-light">
-                    <h5 class="modal-title fw-bold" style="color: #6B2D8B;">Modificar Usuario</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+    <!-- Modal Editar Usuario -->
+    <div class="modal fade" id="modalEditar" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold text-purple"><i class="bi bi-pencil-square me-2"></i>Modificar Usuario</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
-                <form method="POST" class="needs-validation" novalidate>
-                    <div class="modal-body p-4">
-                        <input type="hidden" name="accion" value="editar">
-                        <input type="hidden" name="id_usuario" id="edit_id">
-                        
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <label class="form-label fw-semibold">Nombre Completo</label>
-                                <input type="text" class="form-control" name="nombre_completo" id="edit_nombre" required>
-                                <div class="invalid-feedback">Ingresa el nombre completo.</div>
+                <form id="formEditar" class="needs-validation" novalidate onsubmit="event.preventDefault(); submitForm(this, 'modalEditar');">
+                    <input type="hidden" name="accion" value="editar">
+                    <input type="hidden" name="id_usuario" id="edit_id">
+                    <div class="modal-body">
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label fw-semibold">Nombre(s) <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" name="nombre" id="edit_nombre" required>
+                                <div class="invalid-feedback">Por favor, ingrese el nombre.</div>
                             </div>
-                            <div class="col-md-6 mb-3">
-                                <label class="form-label fw-semibold">Username</label>
-                                <input type="text" class="form-control" name="username" id="edit_username" required>
-                                <div class="invalid-feedback">Ingresa un nombre de usuario.</div>
+                            <div class="col-md-4">
+                                <label class="form-label fw-semibold">Apellido Paterno <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" name="apellido_paterno" id="edit_paterno" required>
+                                <div class="invalid-feedback">Por favor, ingrese el apellido paterno.</div>
                             </div>
-                        </div>
-                        <div class="row">
-                            <div class="col-md-12 mb-3">
-                                <label class="form-label fw-semibold">Correo Electrónico</label>
-                                <input type="email" class="form-control" name="correo_electronico" id="edit_correo" required placeholder="Ej. correo\@ieeq.mx">
-                                <div class="invalid-feedback">Ingresa un correo válido.</div>
+                            <div class="col-md-4">
+                                <label class="form-label fw-semibold">Apellido Materno</label>
+                                <input type="text" class="form-control" name="apellido_materno" id="edit_materno">
                             </div>
-                        </div>
-
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
+                            
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">Correo Electrónico <span class="text-danger">*</span></label>
+                                <input type="email" class="form-control" name="correo_electronico" id="edit_correo" required>
+                                <div class="invalid-feedback">Por favor, ingrese un correo válido.</div>
+                            </div>
+                            
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">Tipo de Usuario <span class="text-danger">*</span></label>
+                                <select class="form-select" name="tipo_usuario" id="edit_tipo" required>
+                                    <option value="ADMINISTRADOR">Administrador</option>
+                                    <option value="FUNCIONARIO_IEEQ">Funcionario IEEQ</option>
+                                    <option value="AUXILIAR">Auxiliar</option>
+                                </select>
+                                <div class="invalid-feedback">Por favor, seleccione un tipo de usuario.</div>
+                            </div>
+                            
+                            <div class="col-md-12">
                                 <label class="form-label fw-semibold text-danger">Nueva Contraseña (Opcional)</label>
-                                <input type="password" class="form-control pass-input" name="password" placeholder="Dejar en blanco para conservar actual" onkeyup="checkStrength(this.value, 'editar')">
-                                <div class="progress mt-2" style="height: 5px;">
-                                    <div id="passStrength_editar" class="progress-bar bg-danger" role="progressbar" style="width: 0%"></div>
+                                <input type="password" class="form-control" name="password" placeholder="Dejar en blanco para conservar actual (mínimo 8 caracteres)" minlength="8">
+                                <div class="invalid-feedback">La nueva contraseña debe tener al menos 8 caracteres.</div>
+                            </div>
+                            
+                            <div class="col-md-12">
+                                <div class="form-check form-switch p-3 bg-light rounded-3 mt-2">
+                                    <input class="form-check-input ms-0 mt-1 me-2" type="checkbox" name="activo" value="1" id="edit_activo">
+                                    <label class="form-check-label fw-semibold ms-2" for="edit_activo">Cuenta Activa</label>
                                 </div>
-                                <small id="passText_editar" class="text-muted" style="font-size: 0.75rem;">Fortaleza de nueva contraseña</small>
                             </div>
-                            <div class="col-md-6 mb-3">
-                                <label class="form-label fw-semibold">Rol del Sistema</label>
-                                <select class="form-select" name="rol" id="edit_rol" required>
-                                    <option value="administrador">Administrador del Sistema</option>
-                                    <option value="funcionario">Funcionario del IEEQ</option>
-                                    <option value="integrante_organizacion">Integrante de la Organización</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div class="form-check form-switch p-3 bg-light rounded-3 mt-2">
-                            <input class="form-check-input ms-0 mt-1 me-2" type="checkbox" name="activo" id="edit_activo" style="transform: scale(1.3);">
-                            <label class="form-check-label fw-semibold ms-2" for="edit_activo">Cuenta Activa</label>
                         </div>
                     </div>
-                    <div class="modal-footer border-top-0 bg-light">
-                        <button type="button" class="btn btn-link text-secondary text-decoration-none" data-bs-dismiss="modal">Cancelar</button>
-                        <button type="submit" class="btn btn-ieeq rounded-pill px-4">Actualizar Datos</button>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-light rounded-pill px-4" data-bs-dismiss="modal">Cancelar</button>
+                        <button type="submit" class="btn btn-ieeq">Actualizar Datos</button>
                     </div>
                 </form>
             </div>
         </div>
     </div>
 
+    <!-- Scripts -->
     <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap\@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
     <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
     <script>
+        var table;
         \$(document).ready(function() {
-            \$('#usuariosTable').DataTable({
+            // Inicialización de DataTable en español con personalización de layout
+            table = \$('#usuariosTable').DataTable({
+                "dom": "rt<'p-4 border-top d-flex justify-content-between align-items-center'ip>",
                 "language": {
-                    "url": "//cdn.datatables.net/plug-ins/1.13.6/i18n/es-ES.json",
-                    "search": "<strong>Buscar:</strong>",
-                    "searchPlaceholder": "Escribe un nombre...",
-                    "lengthMenu": "<strong>Mostrar</strong> _MENU_ <strong>registros</strong>"
+                    "url": "https://cdn.datatables.net/plug-ins/1.13.6/i18n/es-ES.json"
                 },
-                "dom": "<'row mb-3 align-items-center'<'col-sm-12 col-md-6 d-flex align-items-center justify-content-start'l><'col-sm-12 col-md-6 d-flex align-items-center justify-content-end'f>>" +
-                       "<'row'<'col-sm-12'tr>>" +
-                       "<'row mt-3 align-items-center'<'col-sm-12 col-md-5'i><'col-sm-12 col-md-7'p>>",
                 "pageLength": 10,
-                "ordering": true
+                "ordering": true,
+                "columnDefs": [
+                    { "orderable": false, "targets": [5] } // Deshabilitar ordenación en Acciones
+                ]
             });
 
-            // Mobile Sidebar Toggle
+            // Vinculación del buscador personalizado
+            \$('#searchInput').on('keyup', function() {
+                table.search(this.value).draw();
+            });
+
+            // Toggle del sidebar en móvil
             \$('#sidebarToggle, .mobile-overlay').click(function() {
                 \$('#sidebar, .mobile-overlay').toggleClass('active');
             });
         });
 
-        // Bootstrap Validation
-        (function () {
-            'use strict'
-            var forms = document.querySelectorAll('.needs-validation')
-            Array.prototype.slice.call(forms).forEach(function (form) {
-                form.addEventListener('submit', function (event) {
-                    if (!form.checkValidity()) {
-                        event.preventDefault()
-                        event.stopPropagation()
-                    }
-                    form.classList.add('was-validated')
-                }, false)
-            })
-        })()
-
-        // Password Strength Indicator
-        function checkStrength(password, tipo) {
-            var strength = 0;
-            if (password.length >= 8) strength += 25;
-            if (password.match(/[A-Z]/)) strength += 25;
-            if (password.match(/[0-9]/)) strength += 25;
-            if (password.match(/[^a-zA-Z0-9]/)) strength += 25;
-            
-            var bar = document.getElementById('passStrength_' + tipo);
-            var text = document.getElementById('passText_' + tipo);
-            
-            bar.style.width = strength + '%';
-            if (strength === 0) {
-                bar.className = 'progress-bar bg-danger';
-                text.innerText = 'Vacía';
-            } else if (strength <= 25) {
-                bar.className = 'progress-bar bg-danger';
-                text.innerText = 'Muy débil';
-            } else if (strength <= 50) {
-                bar.className = 'progress-bar bg-warning';
-                text.innerText = 'Débil';
-            } else if (strength <= 75) {
-                bar.className = 'progress-bar bg-info';
-                text.innerText = 'Media';
-            } else {
-                bar.className = 'progress-bar bg-success';
-                text.innerText = 'Fuerte';
-            }
+        // Abrir modales limpios
+        function abrirModalCrear() {
+            const form = document.getElementById('formCrear');
+            form.reset();
+            form.classList.remove('was-validated');
+            const modal = new bootstrap.Modal(document.getElementById('modalCrear'));
+            modal.show();
         }
 
-        function abrirModalEditar(id, username, nombre, correo, rol, activo) {
+        function abrirModalEditar(id, nombre, paterno, materno, correo, tipo, activo) {
+            const form = document.getElementById('formEditar');
+            form.reset();
+            form.classList.remove('was-validated');
+            
             document.getElementById('edit_id').value = id;
-            document.getElementById('edit_username').value = username;
             document.getElementById('edit_nombre').value = nombre;
+            document.getElementById('edit_paterno').value = paterno;
+            document.getElementById('edit_materno').value = materno;
             document.getElementById('edit_correo').value = correo;
-            document.getElementById('edit_rol').value = rol;
+            document.getElementById('edit_tipo').value = tipo;
             document.getElementById('edit_activo').checked = (activo == 1);
-            var modal = new bootstrap.Modal(document.getElementById('modalEditar'));
+            
+            const modal = new bootstrap.Modal(document.getElementById('modalEditar'));
             modal.show();
+        }
+
+        // Envío asíncrono de Formularios
+        function submitForm(form, modalId) {
+            if (!form.checkValidity()) {
+                form.classList.add('was-validated');
+                return;
+            }
+            
+            const formData = \$(form).serialize();
+            const submitBtn = \$(form).find('button[type="submit"]');
+            const originalText = submitBtn.html();
+            
+            submitBtn.html('<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Guardando...').prop('disabled', true);
+            
+            \$.ajax({
+                url: 'gestion_usuarios.pl',
+                type: 'POST',
+                data: formData,
+                dataType: 'json',
+                success: function(response) {
+                    submitBtn.html(originalText).prop('disabled', false);
+                    if (response.success) {
+                        bootstrap.Modal.getInstance(document.getElementById(modalId)).hide();
+                        
+                        const Toast = Swal.mixin({
+                            toast: true,
+                            position: 'top-end',
+                            showConfirmButton: false,
+                            timer: 1500,
+                            timerProgressBar: true
+                        });
+                        Toast.fire({
+                            icon: 'success',
+                            title: response.message
+                        }).then(() => {
+                            location.reload();
+                        });
+                    } else {
+                        Swal.fire({
+                            icon: 'error',
+                            title: 'Error',
+                            text: response.message || 'Hubo un error al guardar los cambios.'
+                        });
+                    }
+                },
+                error: function() {
+                    submitBtn.html(originalText).prop('disabled', false);
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Error de red',
+                        text: 'No se pudo establecer comunicación con el servidor.'
+                    });
+                }
+            });
+        }
+
+        // Toggle del estatus activo/inactivo vía AJAX
+        function toggleUsuarioActivo(id, checkbox) {
+            const activo = checkbox.checked ? 1 : 0;
+            checkbox.disabled = true;
+            
+            \$.ajax({
+                url: 'gestion_usuarios.pl',
+                type: 'POST',
+                data: {
+                    accion: 'toggle_activo',
+                    id_usuario: id,
+                    activo: activo
+                },
+                dataType: 'json',
+                success: function(response) {
+                    checkbox.disabled = false;
+                    if (response.success) {
+                        \$('#countTotal').text(response.total);
+                        \$('#countActivos').text(response.activos);
+                        
+                        const badge = \$(`#status-badge-\${id}`);
+                        const text = badge.find('.status-text');
+                        
+                        if (activo === 1) {
+                            badge.removeClass('badge-inactive').addClass('badge-active');
+                            text.text('Activo');
+                        } else {
+                            badge.removeClass('badge-active').addClass('badge-inactive');
+                            text.text('Inactivo');
+                        }
+                        
+                        const Toast = Swal.mixin({
+                            toast: true,
+                            position: 'top-end',
+                            showConfirmButton: false,
+                            timer: 2000,
+                            timerProgressBar: true
+                        });
+                        Toast.fire({
+                            icon: 'success',
+                            title: 'Estatus actualizado exitosamente.'
+                        });
+                    } else {
+                        checkbox.checked = !checkbox.checked;
+                        Swal.fire({
+                            icon: 'error',
+                            title: 'Error',
+                            text: response.message || 'No se pudo actualizar el estatus.'
+                        });
+                    }
+                },
+                error: function() {
+                    checkbox.disabled = false;
+                    checkbox.checked = !checkbox.checked;
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Error de red',
+                        text: 'Hubo un problema de conexión con el servidor.'
+                    });
+                }
+            });
         }
     </script>
 </body>

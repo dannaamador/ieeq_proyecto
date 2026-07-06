@@ -1,6 +1,7 @@
 #!C:\xampp\perl\bin\perl.exe
 use strict;
 use warnings;
+use utf8;
 use CGI;
 use CGI::Session;
 use Digest::SHA qw(sha256_hex);
@@ -10,6 +11,9 @@ use FindBin;
 require "$FindBin::Bin/db.pl";
 
 my $cgi = CGI->new;
+
+# Configurar salida UTF-8
+binmode(STDOUT, ":utf8");
 
 # Inicializar sesión
 my $session = CGI::Session->new(undef, $cgi, {Directory=>"$FindBin::Bin/.sesiones"});
