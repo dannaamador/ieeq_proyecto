@@ -133,7 +133,7 @@ print <<"SIDEBAR_HTML";
     <nav id="sidebar">
 
         <!-- Logo -->
-        <div class="sidebar-header">
+        <div class="sidebar-header d-flex align-items-center justify-content-between">
             <div class="d-flex align-items-center gap-2">
                 <div class="sidebar-logo-icon">
                     <i class="bi bi-shield fs-4 text-white"></i>
@@ -143,6 +143,10 @@ print <<"SIDEBAR_HTML";
                     <div style="font-size:0.72rem; color:rgba(255,255,255,0.65);">Sistema de Registro</div>
                 </div>
             </div>
+            <!-- Botón cerrar para móvil -->
+            <button id="sidebarClose" class="btn btn-link text-white d-lg-none p-0 border-0" type="button" style="font-size: 1.5rem; line-height: 1; outline: none; box-shadow: none;">
+                <i class="bi bi-x-lg"></i>
+            </button>
         </div>
 
         <!-- Menú -->
@@ -298,56 +302,73 @@ print <<"SIDEBAR_HTML";
     </style>
 SIDEBAR_HTML
 
-# ──────────────────────────────────────────────────
-# Script: logout con SweetAlert2 + toggle móvil
-# ──────────────────────────────────────────────────
 print <<'LOGOUT_JS';
 <script>
 (function () {
     'use strict';
 
-    /* --- Logout con SweetAlert2 --- */
-    var btnLogout = document.getElementById('btnLogout');
-    if (btnLogout) {
-        btnLogout.addEventListener('click', function (e) {
-            e.preventDefault();
-            if (typeof Swal !== 'undefined') {
-                Swal.fire({
-                    title: '¿Cerrar Sesión?',
-                    text: '¿Está seguro de que desea salir del sistema?',
-                    icon: 'question',
-                    showCancelButton: true,
-                    confirmButtonColor: '#6B2D8B',
-                    cancelButtonColor: '#6c757d',
-                    confirmButtonText: 'Sí, salir',
-                    cancelButtonText: 'Cancelar',
-                    customClass: { popup: 'rounded-4 border-0 shadow' }
-                }).then(function (result) {
-                    if (result.isConfirmed) {
+    function initSidebar() {
+        /* --- Logout con SweetAlert2 --- */
+        var btnLogout = document.getElementById('btnLogout');
+        if (btnLogout) {
+            btnLogout.addEventListener('click', function (e) {
+                e.preventDefault();
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire({
+                        title: '¿Cerrar Sesión?',
+                        text: '¿Está seguro de que desea salir del sistema?',
+                        icon: 'question',
+                        showCancelButton: true,
+                        confirmButtonColor: '#6B2D8B',
+                        cancelButtonColor: '#6c757d',
+                        confirmButtonText: 'Sí, salir',
+                        cancelButtonText: 'Cancelar',
+                        customClass: { popup: 'rounded-4 border-0 shadow' }
+                    }).then(function (result) {
+                        if (result.isConfirmed) {
+                            window.location.href = 'login.pl?logout=1';
+                        }
+                    });
+                } else {
+                    if (confirm('¿Está seguro de que desea salir del sistema?')) {
                         window.location.href = 'login.pl?logout=1';
                     }
-                });
-            } else {
-                if (confirm('¿Está seguro de que desea salir del sistema?')) {
-                    window.location.href = 'login.pl?logout=1';
                 }
-            }
-        });
+            });
+        }
+
+        /* --- Toggle lateral en móvil --- */
+        var toggle  = document.getElementById('sidebarToggle');
+        var closeBtn = document.getElementById('sidebarClose');
+        var sidebar = document.getElementById('sidebar');
+        var overlay = document.querySelector('.mobile-overlay');
+
+        if (toggle && sidebar && overlay) {
+            toggle.addEventListener('click', function () {
+                sidebar.classList.add('active');
+                overlay.classList.add('active');
+            });
+        }
+
+        if (closeBtn && sidebar && overlay) {
+            closeBtn.addEventListener('click', function () {
+                sidebar.classList.remove('active');
+                overlay.classList.remove('active');
+            });
+        }
+
+        if (overlay && sidebar) {
+            overlay.addEventListener('click', function () {
+                sidebar.classList.remove('active');
+                overlay.classList.remove('active');
+            });
+        }
     }
 
-    /* --- Toggle lateral en móvil --- */
-    var toggle  = document.getElementById('sidebarToggle');
-    var sidebar = document.getElementById('sidebar');
-    var overlay = document.querySelector('.mobile-overlay');
-    if (toggle && sidebar && overlay) {
-        toggle.addEventListener('click', function () {
-            sidebar.classList.toggle('active');
-            overlay.classList.toggle('active');
-        });
-        overlay.addEventListener('click', function () {
-            sidebar.classList.remove('active');
-            overlay.classList.remove('active');
-        });
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initSidebar);
+    } else {
+        initSidebar();
     }
 })();
 </script>

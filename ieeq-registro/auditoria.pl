@@ -298,10 +298,15 @@ print <<"HTML";
     <div id="content">
 
         <!-- Top header -->
-        <div class="top-header">
-            <div>
-                <h4><i class="bi bi-journal-text me-2" style="color:#6B2D8B;"></i>Bitácora de Auditoría</h4>
-                <p>Registro completo e inmutable de todas las operaciones realizadas en el sistema (RF-06).</p>
+        <div class="top-header d-flex align-items-center justify-content-between">
+            <div class="d-flex align-items-center gap-2">
+                <button id="sidebarToggle" class="btn btn-outline-secondary d-lg-none me-3" type="button" style="border-radius: 8px;">
+                    <i class="bi bi-list"></i>
+                </button>
+                <div>
+                    <h4><i class="bi bi-journal-text me-2" style="color:#6B2D8B;"></i>Bitácora de Auditoría</h4>
+                    <p>Registro completo e inmutable de todas las operaciones realizadas en el sistema (RF-06).</p>
+                </div>
             </div>
             <div class="text-muted small d-none d-md-block">Instituto Electoral del Estado de Querétaro</div>
         </div>

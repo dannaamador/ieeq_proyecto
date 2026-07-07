@@ -421,10 +421,15 @@ print <<"HTML";
     <div id="content">
 
         <!-- Page Header -->
-        <div class="page-header">
-            <div>
-                <h4><i class="bi bi-shield-lock me-2" style="color:#6B2D8B;"></i>Gestión de Permisos</h4>
-                <p>Configura los niveles de acceso de cada usuario a los módulos del sistema.</p>
+        <div class="page-header d-flex align-items-center justify-content-between">
+            <div class="d-flex align-items-center gap-2">
+                <button id="sidebarToggle" class="btn btn-outline-secondary d-lg-none me-3" type="button" style="border-radius: 8px;">
+                    <i class="bi bi-list"></i>
+                </button>
+                <div>
+                    <h4><i class="bi bi-shield-lock me-2" style="color:#6B2D8B;"></i>Gestión de Permisos</h4>
+                    <p>Configura los niveles de acceso de cada usuario a los módulos del sistema.</p>
+                </div>
             </div>
             <div class="text-muted d-none d-md-block small">
                 Instituto Electoral del Estado de Querétaro

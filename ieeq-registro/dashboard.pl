@@ -87,8 +87,8 @@ sub get_dashboard_badge {
         return '<span class="badge rounded-pill bg-success bg-opacity-10 text-success border border-success border-opacity-25 px-3 py-1.5" style="font-size: 0.72rem; font-weight: 600;">APROBACIÓN</span>';
     } elsif ($accion eq 'GENERACION_CEDULA' || $accion eq 'GENERACIÓN_CÉDULA' || $accion eq 'CEDULA') {
         return '<span class="badge rounded-pill bg-purple bg-opacity-10 text-purple border border-purple border-opacity-25 px-3 py-1.5" style="font-size: 0.72rem; font-weight: 600; background-color: #f3e8ff; color: #6B2D8B; border: 1px solid #e9d5ff;">GENERACIÓN_CÉDULA</span>';
-    } elsif ($accion eq 'EDICION' || $accion eq 'MODIFICACION' || $accion eq 'EDICIÓ' || $accion eq 'EDICIÓ') {
-        return '<span class="badge rounded-pill bg-warning bg-opacity-10 text-warning border border-warning border-opacity-25 px-3 py-1.5" style="font-size: 0.72rem; font-weight: 600;">EDICIÓ</span>';
+    } elsif ($accion eq 'EDICION' || $accion eq 'MODIFICACION' || $accion eq 'EDICIÓ' || $accion eq 'EDICIÓN') {
+        return '<span class="badge rounded-pill bg-warning bg-opacity-10 text-warning border border-warning border-opacity-25 px-3 py-1.5" style="font-size: 0.72rem; font-weight: 600;">EDICIÓN</span>';
     } elsif ($accion eq 'RECHAZO' || $accion eq 'OBSERVACION') {
         return '<span class="badge rounded-pill bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25 px-3 py-1.5" style="font-size: 0.72rem; font-weight: 600;">RECHAZO</span>';
     } else {

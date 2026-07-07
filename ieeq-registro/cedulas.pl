@@ -386,10 +386,15 @@ require "$FindBin::Bin/_sidebar_admin.pl";
 print <<"HTML";
     <div id="content">
 
-        <div class="page-header">
-            <div>
-                <h4><i class="bi bi-award me-2" style="color:#6B2D8B;"></i>Cédulas de Afiliación</h4>
-                <p>Genera e imprime las cédulas de los afiliados verificados. <strong>$total_disponibles cédulas disponibles.</strong></p>
+        <div class="page-header d-flex align-items-center justify-content-between">
+            <div class="d-flex align-items-center gap-2">
+                <button id="sidebarToggle" class="btn btn-outline-secondary d-lg-none me-3" type="button" style="border-radius: 8px;">
+                    <i class="bi bi-list"></i>
+                </button>
+                <div>
+                    <h4><i class="bi bi-award me-2" style="color:#6B2D8B;"></i>Cédulas de Afiliación</h4>
+                    <p>Genera e imprime las cédulas de los afiliados verificados. <strong>$total_disponibles cédulas disponibles.</strong></p>
+                </div>
             </div>
             <div class="text-muted small d-none d-md-block">Instituto Electoral del Estado de Querétaro</div>
         </div>

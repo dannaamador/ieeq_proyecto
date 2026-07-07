@@ -666,10 +666,15 @@ print <<"HTML";
     <div id="content">
 
         <!-- Page Header -->
-        <div class="page-header">
-            <div>
-                <h4><i class="bi bi-search me-2" style="color:#6B2D8B;"></i>$header_titulo</h4>
-                <p><strong>$header_sub</strong><br><span class="text-muted">$header_count_text</span></p>
+        <div class="page-header d-flex align-items-center justify-content-between">
+            <div class="d-flex align-items-center gap-2">
+                <button id="sidebarToggle" class="btn btn-outline-secondary d-lg-none me-3" type="button" style="border-radius: 8px;">
+                    <i class="bi bi-list"></i>
+                </button>
+                <div>
+                    <h4><i class="bi bi-search me-2" style="color:#6B2D8B;"></i>$header_titulo</h4>
+                    <p><strong>$header_sub</strong><br><span class="text-muted">$header_count_text</span></p>
+                </div>
             </div>
             <div class="d-flex align-items-center gap-2">
                 <button class="btn-export btn-excel" onclick="exportarExcel()">

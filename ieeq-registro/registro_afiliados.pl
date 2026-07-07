@@ -433,10 +433,15 @@ my $chk_aviso = ($af_edit && $af_edit->{acepta_aviso_privacidad}) ? 'checked' : 
 print <<"HTML";
     <div id="content">
         <!-- Top header bar -->
-        <div class="top-header">
-            <div>
-                <h4 class="mb-0 text-dark fw-bold">Registro de Afiliaciones</h4>
-                <p class="text-muted mb-0 small">Captura los datos de identificación y evidencia fotográfica del ciudadano (RF-03).</p>
+        <div class="top-header d-flex align-items-center justify-content-between">
+            <div class="d-flex align-items-center gap-2">
+                <button id="sidebarToggle" class="btn btn-outline-secondary d-lg-none me-3" type="button" style="border-radius: 8px;">
+                    <i class="bi bi-list"></i>
+                </button>
+                <div>
+                    <h4 class="mb-0 text-dark fw-bold">Registro de Afiliaciones</h4>
+                    <p class="text-muted mb-0 small">Captura los datos de identificación y evidencia fotográfica del ciudadano (RF-03).</p>
+                </div>
             </div>
             <div class="text-muted d-none d-md-block fs-6">
                 Instituto Electoral del Estado de Querétaro
